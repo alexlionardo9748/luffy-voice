@@ -1,0 +1,27 @@
+{
+  "name": "luffy",
+  "version": "1.0.0",
+  "private": true,
+  "description": "LUFFY — a cozy, high-quality voice call and screen sharing app for friends.",
+  "main": "server.js",
+  "engines": {
+    "node": ">=18.17.0"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "check": "node --check server.js && node --check public/app.js"
+  },
+  "keywords": [
+    "webrtc",
+    "voice",
+    "screen-sharing",
+    "socket.io",
+    "luffy"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.21.2",
+    "socket.io": "^4.8.1"
+  }
+}
