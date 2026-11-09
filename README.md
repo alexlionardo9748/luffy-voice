@@ -1,8 +1,9 @@
 # LUFFY ⛵
 
-Cozy, high-quality **voice calls + screen sharing** for friends. One Node.js
-process, one package, no accounts, no database. Audio and screen video travel
-peer-to-peer over WebRTC; the server only handles room membership and signaling.
+Cozy, high-quality **voice calls + screen sharing + crew chat** for friends. One
+Node.js process, one package, no accounts, no database. Audio and screen video
+travel peer-to-peer over WebRTC; the server only handles room membership,
+signaling, and ephemeral chat relay.
 
 ## Features
 
@@ -11,10 +12,15 @@ peer-to-peer over WebRTC; the server only handles room membership and signaling.
 - **Screen sharing** — up to 1080p60 with optional system/tab audio.
 - **Independent volume controls** — separate volume sliders and mute buttons for
   each friend's microphone *and* their incoming screen-share audio.
+- **Crew chat** — text, emoji, and picture messages with inline previews, a
+  fullscreen lightbox, drag-and-drop, and clipboard paste. Pictures are
+  downscaled in the browser before sending.
 - **Talk detection** — live level meters and a glowing ring around whoever is speaking.
 - **Robust reconnects** — Socket.IO reconnect + automatic room re-join and peer re-linking.
 - **Privacy first** — no recording, no analytics, no third-party fonts or scripts.
-- **Mobile friendly** — responsive layout, touch targets, fullscreen screen view.
+  Chat is relayed in memory and disappears when everyone leaves.
+- **Mobile friendly** — responsive layout, touch targets, fullscreen screen view,
+  and the chat opens as a bottom sheet on small screens.
 
 ## Requirements
 
@@ -113,7 +119,11 @@ Keep rooms small (≤ 8 people) — mesh upload bandwidth grows linearly.
 - Room names and display names are sanitized and length-limited server-side.
 - Signaling payloads (SDP/ICE) are validated and only relayed to peers in the
   same room.
-- No media ever touches the server; a TURN server only relays encrypted packets.
+- Chat messages are length-limited and rate-limited per socket. Pictures must be
+  PNG/JPEG/GIF/WebP data URLs under 3 MB whose bytes match the claimed type.
+- Audio/video never touches the server; a TURN server only relays encrypted
+  packets. Chat text and pictures are relayed through the signaling server in
+  memory and are never written to disk.
 
 ## License
 

@@ -33,6 +33,7 @@ const HOST = process.env.HOST || "0.0.0.0";
 const IS_PRODUCTION = process.env.NODE_ENV === "production";
 const PUBLIC_DIR = __dirname;
 
+
 /** Mesh calls get expensive fast. 8 people = 7 upstream streams per peer. */
 const MAX_ROOM_PEERS = clampInt(process.env.MAX_ROOM_PEERS, 8, 2, 12);
 
@@ -40,6 +41,14 @@ const ROOM_MAX_LENGTH = 32;
 const NAME_MAX_LENGTH = 24;
 const MAX_SDP_LENGTH = 100_000;
 const MAX_CANDIDATE_LENGTH = 4_096;
+
+// Chat limits. Pictures are sent inline as data URLs, so they get a hard byte
+// ceiling on top of the Socket.IO frame limit below.
+const MAX_CHAT_TEXT = 2_000;
+const MAX_CHAT_IMAGE_BYTES = 3 * 1024 * 1024;
+const MAX_CHAT_IMAGE_DATA_URL = 4_400_000;
+const CHAT_RATE_WINDOW_MS = 10_000;
+const CHAT_RATE_MAX = 25; // messages per socket per window
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -115,6 +124,73 @@ function normalizeCandidate(value) {
   }
 
   return candidate;
+}
+
+/** Chat text: keep newlines, strip control junk, cap the length. */
+function normalizeChatText(raw) {
+  if (typeof raw !== "string") return "";
+  return raw
+    .replace(/\r\n?/g, "\n")
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "")
+    .replace(/\n{4,}/g, "\n\n\n")
+    .trim()
+    .slice(0, MAX_CHAT_TEXT);
+}
+
+const CHAT_IMAGE_PREFIX = /^data:image\/(png|jpe?g|gif|webp);base64,/i;
+
+/** Check the decoded bytes actually look like the image type they claim to be. */
+function looksLikeImage(buffer, type) {
+  if (buffer.length < 12) return false;
+
+  if (type === "png") {
+    return buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4e && buffer[3] === 0x47;
+  }
+  if (type === "jpeg") {
+    return buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff;
+  }
+  if (type === "gif") {
+    return buffer.toString("ascii", 0, 4) === "GIF8";
+  }
+  if (type === "webp") {
+    return (
+      buffer.toString("ascii", 0, 4) === "RIFF" &&
+      buffer.toString("ascii", 8, 12) === "WEBP"
+    );
+  }
+  return false;
+}
+
+/**
+ * Validate an inline picture. Only png/jpeg/gif/webp data URLs up to 3 MB are
+ * accepted, and the claimed type must match the file signature.
+ */
+function normalizeChatImage(raw) {
+  if (typeof raw !== "string" || raw.length > MAX_CHAT_IMAGE_DATA_URL) return null;
+
+  const match = CHAT_IMAGE_PREFIX.exec(raw);
+  if (!match) return null;
+
+  const encoded = raw.slice(match[0].length);
+  if (!encoded) return null;
+
+  let buffer;
+  try {
+    buffer = Buffer.from(encoded, "base64");
+  } catch {
+    return null;
+  }
+
+  if (buffer.length === 0 || buffer.length > MAX_CHAT_IMAGE_BYTES) return null;
+
+  const type = match[1].toLowerCase() === "jpg" ? "jpeg" : match[1].toLowerCase();
+  return looksLikeImage(buffer, type) ? raw : null;
+}
+
+/** Client-generated message ids let the sender render optimistically. */
+function normalizeMessageId(raw) {
+  if (typeof raw !== "string") return "";
+  return /^[A-Za-z0-9_-]{6,64}$/.test(raw) ? raw : "";
 }
 
 function splitUrls(value) {
@@ -202,7 +278,7 @@ app.use((req, res, next) => {
       "default-src 'self'",
       "script-src 'self'",
       "style-src 'self' 'unsafe-inline'",
-      "img-src 'self' data:",
+      "img-src 'self' data: blob:",
       "media-src 'self' blob: mediastream:",
       "connect-src 'self' ws: wss:",
       "font-src 'self'",
@@ -270,8 +346,9 @@ const server = http.createServer(app);
 // ---------------------------------------------------------------------------
 
 const io = new Server(server, {
-  // Signaling payloads are tiny (SDP + ICE). A large buffer is never needed.
-  maxHttpBufferSize: 128 * 1024,
+  // Signaling payloads are tiny (SDP + ICE), but chat pictures travel inline.
+  // 8 MB leaves room for the JSON envelope around a 3 MB image.
+  maxHttpBufferSize: 8 * 1024 * 1024,
   pingInterval: 20_000,
   pingTimeout: 10_000,
   // The browser client is served by this same process.
@@ -358,6 +435,7 @@ io.on("connection", (socket) => {
   socket.data.sharing = false;
   socket.data.sharingAudio = false;
   socket.data.lastJoinAt = 0;
+  socket.data.chatTimes = [];
 
   // -------------------------------------------------------------------------
   // Join a room
@@ -493,6 +571,61 @@ io.on("connection", (socket) => {
       sharing,
       sharingAudio,
     });
+  });
+
+  // -------------------------------------------------------------------------
+  // Crew chat: text, emoji, and inline pictures
+  // -------------------------------------------------------------------------
+  socket.on("chat", (payload, ack) => {
+    const respond = typeof ack === "function" ? ack : () => {};
+    const room = socket.data.room;
+
+    if (!room) {
+      respond({ ok: false, error: "Join a room before sending messages." });
+      return;
+    }
+    if (!payload || typeof payload !== "object") {
+      respond({ ok: false, error: "Invalid message." });
+      return;
+    }
+
+    const now = Date.now();
+    socket.data.chatTimes = socket.data.chatTimes.filter(
+      (sentAt) => now - sentAt < CHAT_RATE_WINDOW_MS
+    );
+    if (socket.data.chatTimes.length >= CHAT_RATE_MAX) {
+      respond({ ok: false, error: "Whoa, slow down a little. Try again in a moment." });
+      return;
+    }
+
+    const rawImage = typeof payload.image === "string" && payload.image ? payload.image : "";
+    const image = rawImage ? normalizeChatImage(rawImage) : null;
+    if (rawImage && !image) {
+      respond({ ok: false, error: "That picture is too large or not a supported image." });
+      return;
+    }
+
+    const text = normalizeChatText(payload.text);
+    if (!text && !image) {
+      respond({ ok: false, error: "That message was empty." });
+      return;
+    }
+
+    socket.data.chatTimes.push(now);
+
+    const message = {
+      id: normalizeMessageId(payload.id) || crypto.randomUUID(),
+      from: socket.id,
+      fromName: socket.data.name,
+      at: now,
+      text,
+      image,
+    };
+
+    // Echo to the sender too: the sender uses this authoritative copy to turn
+    // its optimistic "Sending…" bubble into a delivered one.
+    io.to(room).emit("chat", message);
+    respond({ ok: true, id: message.id, at: message.at });
   });
 
   // -------------------------------------------------------------------------
