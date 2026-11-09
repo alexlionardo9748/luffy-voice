@@ -621,7 +621,7 @@
       flex-direction: column;
       gap: 18px;
       padding: 22px 0 40px;
-      animation: fade-up 0.45s ease both;
+      animation: fade-in 0.45s ease both;
     }
 
     .call-head {
@@ -1166,7 +1166,597 @@
     }
 
     /* =====================================================================
-       8. Floating controls
+       8. Crew chat
+       ===================================================================== */
+    .call-body {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 340px;
+      gap: 16px;
+      align-items: start;
+    }
+
+    .chat {
+      position: sticky;
+      top: 18px;
+      display: flex;
+      flex-direction: column;
+      height: min(640px, calc(100dvh - 210px));
+      min-height: 380px;
+      overflow: hidden;
+    }
+
+    .chat.is-dragging {
+      border-color: rgba(255, 209, 102, 0.55);
+      box-shadow:
+        0 0 0 2px rgba(255, 209, 102, 0.18),
+        var(--shadow);
+    }
+
+    .chat.is-dragging::after {
+      content: "Drop a picture to share";
+      position: absolute;
+      inset: 0;
+      z-index: 10;
+      display: grid;
+      place-items: center;
+      border-radius: inherit;
+      background: rgba(5, 8, 15, 0.74);
+      color: var(--gold);
+      font-size: 0.84rem;
+      font-weight: 700;
+      pointer-events: none;
+      -webkit-backdrop-filter: blur(4px);
+      backdrop-filter: blur(4px);
+    }
+
+    body.lightbox-open {
+      overflow: hidden;
+    }
+
+    .chat-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--line);
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.03), transparent);
+    }
+
+    .chat-head h2 {
+      margin: 0;
+      font-size: 0.92rem;
+      letter-spacing: -0.01em;
+    }
+
+    .chat-head p {
+      margin: 4px 0 0;
+      color: var(--muted-2);
+      font-size: 0.66rem;
+      line-height: 1.4;
+    }
+
+    .chat-head-icon {
+      display: grid;
+      place-items: center;
+      width: 34px;
+      height: 34px;
+      flex: none;
+      border: 1px solid rgba(255, 209, 102, 0.18);
+      border-radius: 10px;
+      background: rgba(255, 209, 102, 0.08);
+      color: var(--gold-2);
+    }
+
+    .chat-head-icon svg {
+      width: 17px;
+      height: 17px;
+    }
+
+    .chat-close {
+      display: none;
+      place-items: center;
+      width: 34px;
+      height: 34px;
+      flex: none;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: rgba(255, 255, 255, 0.05);
+      color: #cfd8e8;
+    }
+
+    .chat-close svg {
+      width: 16px;
+      height: 16px;
+    }
+
+    .chat-close:hover {
+      background: rgba(255, 90, 78, 0.14);
+      border-color: rgba(255, 90, 78, 0.35);
+      color: #ffb4ae;
+    }
+
+    .chat-log {
+      display: flex;
+      flex: 1;
+      flex-direction: column;
+      gap: 11px;
+      min-height: 0;
+      padding: 14px;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      scrollbar-color: rgba(255, 209, 102, 0.25) transparent;
+      scrollbar-width: thin;
+    }
+
+    .chat-log::-webkit-scrollbar {
+      width: 8px;
+    }
+
+    .chat-log::-webkit-scrollbar-thumb {
+      border: 2px solid transparent;
+      border-radius: 999px;
+      background: rgba(255, 209, 102, 0.22);
+      background-clip: padding-box;
+    }
+
+    .chat-empty {
+      display: flex;
+      flex: 1;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 7px;
+      padding: 18px;
+      color: var(--muted-2);
+      text-align: center;
+    }
+
+    .chat-empty svg {
+      width: 34px;
+      height: 34px;
+      margin-bottom: 2px;
+      color: rgba(255, 209, 102, 0.6);
+    }
+
+    .chat-empty strong {
+      color: #dbe3f1;
+      font-size: 0.82rem;
+    }
+
+    .chat-empty span {
+      max-width: 220px;
+      font-size: 0.68rem;
+      line-height: 1.5;
+    }
+
+    .chat-msg {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 4px;
+      max-width: 88%;
+      animation: chat-in 0.18s ease both;
+    }
+
+    .chat-msg.is-mine {
+      align-self: flex-end;
+      align-items: flex-end;
+    }
+
+    .chat-msg-meta {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 0 3px;
+      color: var(--muted-2);
+      font-size: 0.61rem;
+    }
+
+    .chat-msg-name {
+      max-width: 150px;
+      overflow: hidden;
+      color: #c3cee1;
+      font-weight: 700;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .chat-msg.is-mine .chat-msg-name {
+      color: #ffe0a0;
+    }
+
+    .chat-msg-time {
+      opacity: 0.8;
+      white-space: nowrap;
+    }
+
+    .chat-msg-body {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      max-width: 100%;
+      padding: 9px 12px;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 4px 14px 14px 14px;
+      background: rgba(255, 255, 255, 0.055);
+      color: #e9eef8;
+      font-size: 0.84rem;
+      line-height: 1.46;
+      overflow-wrap: anywhere;
+    }
+
+    .chat-msg.is-mine .chat-msg-body {
+      border-color: rgba(255, 209, 102, 0.24);
+      border-radius: 14px 4px 14px 14px;
+      background: linear-gradient(135deg, rgba(255, 209, 102, 0.16), rgba(255, 140, 60, 0.09));
+    }
+
+    .chat-msg.has-image .chat-msg-body {
+      padding: 5px;
+      background: rgba(255, 255, 255, 0.04);
+    }
+
+    .chat-msg.has-image.is-mine .chat-msg-body {
+      background: linear-gradient(135deg, rgba(255, 209, 102, 0.14), rgba(255, 140, 60, 0.07));
+    }
+
+    .chat-msg-text {
+      margin: 0;
+      padding: 1px 2px;
+      white-space: pre-wrap;
+    }
+
+    .chat-msg.has-image .chat-msg-text {
+      padding: 5px 7px 3px;
+    }
+
+    .chat-msg-image {
+      display: block;
+      max-width: 100%;
+      padding: 0;
+      overflow: hidden;
+      border: 0;
+      border-radius: 10px;
+      background: #02060d;
+      cursor: zoom-in;
+    }
+
+    .chat-msg-image img {
+      display: block;
+      width: auto;
+      max-width: 100%;
+      max-height: 240px;
+      height: auto;
+      object-fit: contain;
+    }
+
+    .chat-msg.is-pending .chat-msg-body {
+      opacity: 0.7;
+    }
+
+    .chat-msg.is-failed .chat-msg-body {
+      border-color: rgba(255, 90, 78, 0.4);
+    }
+
+    .chat-msg-status {
+      padding: 0 4px;
+      color: var(--muted-2);
+      font-size: 0.58rem;
+    }
+
+    .chat-msg.is-failed .chat-msg-status {
+      color: #ff9c95;
+    }
+
+    .chat-compose {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      padding: 10px 12px 12px;
+      border-top: 1px solid var(--line);
+      background: rgba(8, 13, 24, 0.58);
+    }
+
+    .chat-attachment {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 6px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: rgba(255, 255, 255, 0.04);
+    }
+
+    .chat-attachment img {
+      width: 52px;
+      height: 52px;
+      flex: none;
+      border-radius: 8px;
+      object-fit: cover;
+      background: #02060d;
+    }
+
+    .chat-attachment-info {
+      display: flex;
+      flex: 1;
+      flex-direction: column;
+      gap: 2px;
+      min-width: 0;
+    }
+
+    .chat-attachment-name {
+      overflow: hidden;
+      color: #dfe6f3;
+      font-size: 0.72rem;
+      font-weight: 600;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .chat-attachment-size {
+      color: var(--muted-2);
+      font-size: 0.62rem;
+    }
+
+    .chat-attachment-remove {
+      display: grid;
+      place-items: center;
+      width: 30px;
+      height: 30px;
+      flex: none;
+      border: 1px solid transparent;
+      border-radius: 8px;
+      background: transparent;
+      color: #94a0b5;
+    }
+
+    .chat-attachment-remove:hover {
+      border-color: rgba(255, 90, 78, 0.35);
+      background: rgba(255, 90, 78, 0.12);
+      color: #ffb4ae;
+    }
+
+    .chat-attachment-remove svg {
+      width: 14px;
+      height: 14px;
+    }
+
+    .chat-input-row {
+      display: flex;
+      align-items: flex-end;
+      gap: 3px;
+      padding: 4px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: rgba(6, 10, 20, 0.72);
+      transition: border-color 0.18s, box-shadow 0.18s;
+    }
+
+    .chat-input-row:focus-within {
+      border-color: rgba(255, 209, 102, 0.38);
+      box-shadow: 0 0 0 3px rgba(255, 209, 102, 0.08);
+    }
+
+    .chat-icon-btn {
+      display: grid;
+      place-items: center;
+      width: 34px;
+      height: 34px;
+      flex: none;
+      border: 0;
+      border-radius: 9px;
+      background: transparent;
+      color: #8f9bb1;
+      transition: color 0.16s, background 0.16s, transform 0.16s;
+    }
+
+    .chat-icon-btn:hover,
+    .chat-icon-btn.is-active {
+      background: rgba(255, 209, 102, 0.13);
+      color: var(--gold);
+    }
+
+    .chat-icon-btn.is-busy {
+      color: var(--gold);
+      animation: blink 0.9s ease-in-out infinite;
+    }
+
+    .chat-icon-btn svg {
+      width: 18px;
+      height: 18px;
+    }
+
+    .chat-input {
+      flex: 1;
+      min-width: 0;
+      min-height: 34px;
+      max-height: 112px;
+      padding: 8px 2px;
+      overflow-y: auto;
+      border: 0;
+      outline: 0;
+      resize: none;
+      background: transparent;
+      color: #f2f5fb;
+      font: inherit;
+      font-size: 0.83rem;
+      line-height: 1.4;
+      scrollbar-width: thin;
+    }
+
+    .chat-input::placeholder {
+      color: #66738b;
+    }
+
+    .chat-send-btn {
+      display: grid;
+      place-items: center;
+      width: 36px;
+      height: 36px;
+      flex: none;
+      border: 0;
+      border-radius: 10px;
+      background: linear-gradient(135deg, #ffe08a, #ffae42);
+      color: #2a1a04;
+      box-shadow: 0 8px 18px -8px rgba(255, 170, 60, 0.75);
+      transition: transform 0.16s, filter 0.16s, background 0.16s, color 0.16s;
+    }
+
+    .chat-send-btn svg {
+      width: 18px;
+      height: 18px;
+    }
+
+    .chat-send-btn:disabled {
+      background: rgba(255, 255, 255, 0.06);
+      box-shadow: none;
+      color: #5d6678;
+      cursor: not-allowed;
+    }
+
+    .chat-send-btn:not(:disabled):hover {
+      filter: brightness(1.06);
+      transform: translateY(-1px);
+    }
+
+    .chat-send-btn:not(:disabled):active {
+      transform: translateY(0);
+    }
+
+    .chat-compose-hint {
+      margin: 0;
+      padding: 0 4px;
+      color: #5f6b80;
+      font-size: 0.59rem;
+    }
+
+    .emoji-panel {
+      position: absolute;
+      right: 10px;
+      bottom: calc(100% + 8px);
+      left: 10px;
+      z-index: 6;
+      display: grid;
+      grid-template-columns: repeat(8, 1fr);
+      gap: 2px;
+      max-height: 214px;
+      padding: 8px;
+      overflow-y: auto;
+      border: 1px solid var(--line-strong);
+      border-radius: 14px;
+      background: rgba(12, 18, 31, 0.98);
+      box-shadow: 0 22px 50px -16px rgba(0, 0, 0, 0.9);
+      scrollbar-width: thin;
+      animation: chat-pop 0.14s ease both;
+      -webkit-backdrop-filter: blur(18px);
+      backdrop-filter: blur(18px);
+    }
+
+    .emoji-btn {
+      display: grid;
+      place-items: center;
+      width: 100%;
+      aspect-ratio: 1;
+      padding: 0;
+      border: 0;
+      border-radius: 8px;
+      background: transparent;
+      font-size: 1.15rem;
+      line-height: 1;
+      transition: background 0.14s, transform 0.14s;
+    }
+
+    .emoji-btn:hover {
+      background: rgba(255, 209, 102, 0.12);
+      transform: scale(1.12);
+    }
+
+    .chat-control {
+      display: none;
+      position: relative;
+    }
+
+    .control-icon {
+      position: relative;
+    }
+
+    .unread-badge {
+      position: absolute;
+      top: -5px;
+      right: -6px;
+      min-width: 16px;
+      height: 16px;
+      padding: 0 4px;
+      border-radius: 999px;
+      background: linear-gradient(135deg, #ff5a4e, #d61f45);
+      color: #fff;
+      font-size: 0.55rem;
+      font-weight: 800;
+      line-height: 16px;
+      text-align: center;
+      box-shadow: 0 0 10px rgba(255, 60, 70, 0.65);
+    }
+
+    .chat-backdrop {
+      position: fixed;
+      inset: 0;
+      z-index: 55;
+      background: rgba(3, 6, 13, 0.62);
+      animation: fade-in 0.2s ease both;
+      -webkit-backdrop-filter: blur(3px);
+      backdrop-filter: blur(3px);
+    }
+
+    .chat-lightbox {
+      position: fixed;
+      inset: 0;
+      z-index: 120;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      background: rgba(2, 4, 10, 0.88);
+      animation: fade-in 0.18s ease both;
+      -webkit-backdrop-filter: blur(10px);
+      backdrop-filter: blur(10px);
+    }
+
+    .chat-lightbox img {
+      max-width: min(1100px, 100%);
+      max-height: calc(100dvh - 80px);
+      border-radius: 12px;
+      box-shadow: 0 30px 80px rgba(0, 0, 0, 0.8);
+      object-fit: contain;
+    }
+
+    .chat-lightbox-close {
+      position: absolute;
+      top: max(16px, env(safe-area-inset-top));
+      right: 16px;
+      display: grid;
+      place-items: center;
+      width: 42px;
+      height: 42px;
+      border: 1px solid var(--line-strong);
+      border-radius: 50%;
+      background: rgba(10, 15, 28, 0.85);
+      color: #fff;
+    }
+
+    .chat-lightbox-close:hover {
+      background: rgba(255, 90, 78, 0.22);
+    }
+
+    .chat-lightbox-close svg {
+      width: 18px;
+      height: 18px;
+    }
+
+    /* =====================================================================
+       9. Floating controls
        ===================================================================== */
     .controls-wrap {
       position: sticky;
@@ -1332,7 +1922,7 @@
     }
 
     /* =====================================================================
-       9. Toasts
+       10. Toasts
        ===================================================================== */
     .toasts {
       position: fixed;
@@ -1403,7 +1993,7 @@
     }
 
     /* =====================================================================
-       10. Footer
+       11. Footer
        ===================================================================== */
     .site-footer {
       display: flex;
@@ -1424,7 +2014,7 @@
     }
 
     /* =====================================================================
-       11. Animations
+       12. Animations
        ===================================================================== */
     @keyframes hat-float {
       0%,
@@ -1494,17 +2084,6 @@
       }
     }
 
-    @keyframes fade-up {
-      from {
-        opacity: 0;
-        transform: translateY(12px);
-      }
-      to {
-        opacity: 1;
-        transform: none;
-      }
-    }
-
     @keyframes card-in {
       from {
         opacity: 0;
@@ -1516,9 +2095,92 @@
       }
     }
 
+    @keyframes chat-in {
+      from {
+        opacity: 0;
+        transform: translateY(6px);
+      }
+      to {
+        opacity: 1;
+        transform: none;
+      }
+    }
+
+    @keyframes chat-pop {
+      from {
+        opacity: 0;
+        transform: translateY(6px) scale(0.985);
+      }
+      to {
+        opacity: 1;
+        transform: none;
+      }
+    }
+
+    @keyframes fade-in {
+      from {
+        opacity: 0;
+      }
+      to {
+        opacity: 1;
+      }
+    }
+
     /* =====================================================================
-       12. Responsive
+       13. Responsive
        ===================================================================== */
+    @media (max-width: 1080px) {
+      .call-body {
+        grid-template-columns: minmax(0, 1fr);
+      }
+
+      .chat-control {
+        display: flex;
+      }
+
+      .chat {
+        position: fixed;
+        top: auto;
+        right: max(12px, env(safe-area-inset-right));
+        bottom: max(12px, env(safe-area-inset-bottom));
+        left: max(12px, env(safe-area-inset-left));
+        z-index: 60;
+        width: auto;
+        max-width: 520px;
+        height: min(74dvh, 620px);
+        min-height: 0;
+        margin: 0 auto;
+        visibility: hidden;
+        opacity: 0;
+        pointer-events: none;
+        transform: translateY(calc(100% + 28px)) scale(0.98);
+        box-shadow: 0 30px 80px -20px rgba(0, 0, 0, 0.95);
+        transition:
+          opacity 0.24s ease,
+          transform 0.24s cubic-bezier(0.22, 1, 0.36, 1),
+          visibility 0.24s;
+      }
+
+      body.chat-open {
+        overflow: hidden;
+      }
+
+      body.chat-open .chat {
+        visibility: visible;
+        opacity: 1;
+        pointer-events: auto;
+        transform: none;
+      }
+
+      .chat-head-icon {
+        display: none;
+      }
+
+      .chat-close {
+        display: grid;
+      }
+    }
+
     @media (max-width: 960px) {
       .lobby {
         grid-template-columns: minmax(0, 1fr);
@@ -1624,6 +2286,26 @@
 
       .peer-card {
         border-radius: 18px;
+      }
+
+      .chat {
+        right: max(8px, env(safe-area-inset-right));
+        bottom: max(8px, env(safe-area-inset-bottom));
+        left: max(8px, env(safe-area-inset-left));
+        height: min(78dvh, 600px);
+        border-radius: 18px;
+      }
+
+      .chat-log {
+        padding: 12px;
+      }
+
+      .chat-compose-hint {
+        display: none;
+      }
+
+      .chat-lightbox {
+        padding: 12px;
       }
 
       .controls-wrap {
@@ -1755,6 +2437,27 @@
     </symbol>
     <symbol id="icon-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
       <path d="M4 12h15M13 6l6 6-6 6" />
+    </symbol>
+    <symbol id="icon-chat" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M4.2 4.5h15.6a1.7 1.7 0 0 1 1.7 1.7v9a1.7 1.7 0 0 1-1.7 1.7H9.4l-4.9 3.3v-3.3a1.7 1.7 0 0 1-1.7-1.7v-9a1.7 1.7 0 0 1 1.4-1.7z" />
+      <path d="M7.5 9.8h9M7.5 13h5.6" />
+    </symbol>
+    <symbol id="icon-smile" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="12" r="9" />
+      <path d="M8.2 14.2a4.6 4.6 0 0 0 7.6 0" />
+      <circle cx="9" cy="9.6" r="1" fill="currentColor" stroke="none" />
+      <circle cx="15" cy="9.6" r="1" fill="currentColor" stroke="none" />
+    </symbol>
+    <symbol id="icon-image" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="3" y="4" width="18" height="16" rx="3" />
+      <circle cx="8.6" cy="9.4" r="1.6" />
+      <path d="m4.5 18 5.1-5.2a2 2 0 0 1 2.8 0l2.2 2.2 1.6-1.6a2 2 0 0 1 2.8 0l2.5 2.5" />
+    </symbol>
+    <symbol id="icon-send" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M21 3 10.4 13.6M21 3l-6.6 18-4-8-8-4L21 3z" />
+    </symbol>
+    <symbol id="icon-x" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M6 6l12 12M18 6 6 18" />
     </symbol>
   </svg>
 
@@ -1909,7 +2612,103 @@
         </div>
       </div>
 
-      <div class="peer-grid" id="peerGrid" aria-live="polite"></div>
+      <div class="call-body">
+        <div class="peer-grid" id="peerGrid" aria-live="polite"></div>
+
+        <aside class="chat card" id="chatPanel" aria-label="Crew chat">
+          <header class="chat-head">
+            <div>
+              <h2>Crew chat</h2>
+              <p>Text, emoji &amp; pictures · gone when you leave</p>
+            </div>
+            <span class="chat-head-icon" aria-hidden="true">
+              <svg><use href="#icon-chat"></use></svg>
+            </span>
+            <button class="chat-close" id="chatCloseBtn" type="button" aria-label="Close chat">
+              <svg aria-hidden="true"><use href="#icon-x"></use></svg>
+            </button>
+          </header>
+
+          <div class="chat-log" id="chatLog" role="log" aria-live="polite" aria-relevant="additions text">
+            <div class="chat-empty" id="chatEmpty">
+              <svg aria-hidden="true"><use href="#icon-chat"></use></svg>
+              <strong>No messages yet</strong>
+              <span>Say ahoy, drop an emoji, or share a picture with the crew.</span>
+            </div>
+          </div>
+
+          <form class="chat-compose" id="chatForm">
+            <div class="emoji-panel" id="emojiPanel" hidden aria-label="Choose an emoji"></div>
+
+            <div class="chat-attachment" id="chatAttachment" hidden>
+              <img id="chatAttachmentImage" alt="Picture ready to send" />
+              <div class="chat-attachment-info">
+                <span class="chat-attachment-name" id="chatAttachmentName">picture.jpg</span>
+                <span class="chat-attachment-size" id="chatAttachmentSize">0 KB</span>
+              </div>
+              <button
+                class="chat-attachment-remove"
+                id="chatAttachmentRemove"
+                type="button"
+                aria-label="Remove picture"
+                title="Remove picture"
+              >
+                <svg aria-hidden="true"><use href="#icon-x"></use></svg>
+              </button>
+            </div>
+
+            <div class="chat-input-row">
+              <button
+                class="chat-icon-btn"
+                id="emojiBtn"
+                type="button"
+                aria-label="Add emoji"
+                aria-expanded="false"
+                title="Emoji"
+              >
+                <svg aria-hidden="true"><use href="#icon-smile"></use></svg>
+              </button>
+              <button
+                class="chat-icon-btn"
+                id="imageBtn"
+                type="button"
+                aria-label="Attach a picture"
+                title="Picture"
+              >
+                <svg aria-hidden="true"><use href="#icon-image"></use></svg>
+              </button>
+              <textarea
+                class="chat-input"
+                id="chatInput"
+                rows="1"
+                maxlength="2000"
+                placeholder="Message the crew…"
+                aria-label="Chat message"
+              ></textarea>
+              <button
+                class="chat-send-btn"
+                id="chatSendBtn"
+                type="submit"
+                aria-label="Send message"
+                title="Send"
+                disabled
+              >
+                <svg aria-hidden="true"><use href="#icon-send"></use></svg>
+              </button>
+            </div>
+
+            <p class="chat-compose-hint">
+              Enter to send · Shift+Enter for a new line · paste or drag a picture
+            </p>
+            <input
+              id="chatImageInput"
+              type="file"
+              accept="image/png,image/jpeg,image/webp,image/gif"
+              hidden
+            />
+          </form>
+        </aside>
+      </div>
 
       <div class="controls-wrap">
         <div class="controls card" role="toolbar" aria-label="Call controls">
@@ -1921,6 +2720,14 @@
           <button class="control-btn" id="screenBtn" type="button" aria-pressed="false">
             <span class="control-icon"><svg aria-hidden="true"><use href="#icon-screen"></use></svg></span>
             <span class="control-label" id="screenLabel">Share</span>
+          </button>
+
+          <button class="control-btn chat-control" id="chatBtn" type="button" aria-pressed="false">
+            <span class="control-icon">
+              <svg aria-hidden="true"><use href="#icon-chat"></use></svg>
+              <span class="unread-badge" id="chatUnread" hidden>0</span>
+            </span>
+            <span class="control-label">Chat</span>
           </button>
 
           <button class="control-btn unlock-btn" id="audioUnlockBtn" type="button" hidden>
@@ -1940,6 +2747,22 @@
       </div>
     </section>
   </main>
+
+  <div class="chat-backdrop" id="chatBackdrop" hidden></div>
+
+  <div
+    class="chat-lightbox"
+    id="chatLightbox"
+    role="dialog"
+    aria-modal="true"
+    aria-label="Shared picture"
+    hidden
+  >
+    <button class="chat-lightbox-close" id="chatLightboxClose" type="button" aria-label="Close picture">
+      <svg aria-hidden="true"><use href="#icon-x"></use></svg>
+    </button>
+    <img id="chatLightboxImage" alt="Shared picture" />
+  </div>
 
   <footer class="site-footer">
     <span>LUFFY · Voice &amp; screen for friends</span>

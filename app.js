@@ -59,6 +59,30 @@
     audioUnlockBtn: $("#audioUnlockBtn"),
     toasts: $("#toasts"),
     peerTemplate: $("#peerCardTemplate"),
+
+    // Crew chat
+    chatPanel: $("#chatPanel"),
+    chatLog: $("#chatLog"),
+    chatEmpty: $("#chatEmpty"),
+    chatForm: $("#chatForm"),
+    chatInput: $("#chatInput"),
+    chatSendBtn: $("#chatSendBtn"),
+    emojiBtn: $("#emojiBtn"),
+    emojiPanel: $("#emojiPanel"),
+    imageBtn: $("#imageBtn"),
+    imageInput: $("#chatImageInput"),
+    chatAttachment: $("#chatAttachment"),
+    chatAttachmentImage: $("#chatAttachmentImage"),
+    chatAttachmentName: $("#chatAttachmentName"),
+    chatAttachmentSize: $("#chatAttachmentSize"),
+    chatAttachmentRemove: $("#chatAttachmentRemove"),
+    chatBtn: $("#chatBtn"),
+    chatUnread: $("#chatUnread"),
+    chatCloseBtn: $("#chatCloseBtn"),
+    chatBackdrop: $("#chatBackdrop"),
+    chatLightbox: $("#chatLightbox"),
+    chatLightboxImage: $("#chatLightboxImage"),
+    chatLightboxClose: $("#chatLightboxClose"),
   };
 
   // =========================================================================
@@ -75,6 +99,26 @@
 
   const STORAGE_NAME = "luffy:name";
   const STORAGE_VOLUMES = "luffy:volumes:v1";
+
+  // Chat
+  const CHAT_MAX_LENGTH = 2_000;
+  const CHAT_MAX_MESSAGES = 200;
+  const CHAT_IMAGE_INPUT_MAX = 15 * 1024 * 1024;
+  const CHAT_IMAGE_DATA_URL_MAX = 3_400_000;
+  const CHAT_IMAGE_DIMENSION = 1_600;
+  const CHAT_DRAWER_QUERY = "(max-width: 1080px)";
+  const CHAT_EMOJIS = [
+    "😀", "😄", "😂", "🤣", "😊", "😍", "😘", "😎",
+    "🤩", "🥳", "😜", "🤔", "🤗", "🤭", "😴", "😭",
+    "😤", "😡", "🥺", "😱", "🤯", "🫠", "😇", "😈",
+    "💀", "👻", "🤖", "👽", "💩", "🔥", "✨", "🌟",
+    "💫", "⚡", "💥", "💖", "💛", "💚", "💙", "💜",
+    "🖤", "💯", "👍", "👎", "👏", "🙌", "🤝", "🙏",
+    "💪", "🫶", "👋", "✌️", "🤞", "🫡", "🍻", "🍺",
+    "🍕", "🍔", "🍟", "🍣", "🍰", "☕", "🧊", "⛵",
+    "🌊", "🌴", "🏴‍☠️", "🗺️", "🎉", "🎮", "🎵", "🎧",
+    "📸", "❤️",
+  ];
 
   const ROOM_WORDS = [
     "grand-line",
@@ -114,6 +158,13 @@
     peers: new Map(),
     selfCard: null,
     localMeter: null,
+
+    // Crew chat
+    chatMessages: new Map(),
+    chatAttachment: null,
+    chatUnread: 0,
+    chatOpen: false,
+    chatImageBusy: false,
 
     // ICE + misc
     iceServers: DEFAULT_ICE,
@@ -1621,6 +1672,7 @@
       updateRoomUI();
       updateMicUI();
       updateScreenUI();
+      updateChatSendState();
 
       if (!reconnect) {
         el.roomInput.value = state.room;
@@ -1703,6 +1755,7 @@
     state.room = "";
 
     closeAllPeers();
+    resetChat();
 
     if (state.screenTrack) {
       state.screenTrack.removeEventListener("ended", onScreenShareEnded);
@@ -1796,6 +1849,10 @@
       updatePeerMedia(peer);
     });
 
+    socket.on("chat", (payload) => {
+      receiveChatMessage(payload);
+    });
+
     socket.on("offer", (payload) => {
       void handleOffer(payload);
     });
@@ -1870,7 +1927,564 @@
   }
 
   // =========================================================================
-  // 13. Join flow
+  // 13. Crew chat (text, emoji, pictures)
+  // =========================================================================
+  const CHAT_TIME_FORMAT = new Intl.DateTimeFormat(undefined, {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+  let chatLightboxReturnFocus = null;
+
+  function chatUsesDrawer() {
+    return window.matchMedia(CHAT_DRAWER_QUERY).matches;
+  }
+
+  /** True when the crew can see new messages without opening anything. */
+  function isChatVisible() {
+    return (!chatUsesDrawer() || state.chatOpen) && document.visibilityState === "visible";
+  }
+
+  function updateChatUnread() {
+    el.chatUnread.textContent = state.chatUnread > 99 ? "99+" : String(state.chatUnread);
+    el.chatUnread.hidden = state.chatUnread <= 0;
+  }
+
+  function clearChatUnread() {
+    state.chatUnread = 0;
+    updateChatUnread();
+  }
+
+  function setChatOpen(open) {
+    const drawer = chatUsesDrawer();
+    state.chatOpen = Boolean(open) && drawer;
+    document.body.classList.toggle("chat-open", state.chatOpen);
+    el.chatBackdrop.hidden = !state.chatOpen;
+    el.chatBtn.setAttribute("aria-pressed", String(state.chatOpen));
+
+    if (state.chatOpen) {
+      clearChatUnread();
+      window.setTimeout(() => {
+        autoGrowChatInput();
+        el.chatInput.focus();
+      }, 140);
+    } else if (!drawer) {
+      clearChatUnread();
+    }
+  }
+
+  function updateChatEmpty() {
+    el.chatEmpty.hidden = state.chatMessages.size > 0;
+  }
+
+  function formatChatTime(timestamp) {
+    const date = new Date(timestamp);
+    if (Number.isNaN(date.getTime())) return "";
+    return CHAT_TIME_FORMAT.format(date);
+  }
+
+  function formatBytes(bytes) {
+    const value = Number(bytes);
+    if (!Number.isFinite(value) || value <= 0) return "0 KB";
+    if (value < 1024) return `${Math.round(value)} B`;
+    if (value < 1024 * 1024) return `${Math.round(value / 1024)} KB`;
+    return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+  }
+
+  function dataUrlBytes(dataUrl) {
+    const comma = dataUrl.indexOf(",");
+    if (comma < 0) return 0;
+    return Math.round(((dataUrl.length - comma - 1) * 3) / 4);
+  }
+
+  function newMessageId() {
+    if (window.crypto && typeof window.crypto.randomUUID === "function") {
+      return window.crypto.randomUUID();
+    }
+    return `m-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  }
+
+  function updateChatMessageNode(node, message) {
+    node.classList.toggle("is-pending", message.pending === true);
+    node.classList.toggle("is-failed", message.failed === true);
+
+    const status = node.querySelector(".chat-msg-status");
+    if (status) {
+      status.textContent = message.failed
+        ? message.failReason || "Not sent"
+        : message.pending
+          ? "Sending…"
+          : "";
+      status.hidden = !message.pending && !message.failed;
+    }
+
+    const time = node.querySelector(".chat-msg-time");
+    const date = new Date(message.at);
+    if (time && !Number.isNaN(date.getTime())) {
+      time.dateTime = date.toISOString();
+      time.textContent = formatChatTime(message.at);
+      time.title = date.toLocaleString();
+    }
+  }
+
+  function renderChatMessage(message) {
+    const article = document.createElement("article");
+    article.className = "chat-msg";
+    article.dataset.chatId = message.id;
+    article.classList.toggle("is-mine", message.mine === true);
+    article.classList.toggle("has-image", Boolean(message.image));
+    article.classList.toggle("is-pending", message.pending === true);
+    article.classList.toggle("is-failed", message.failed === true);
+
+    const meta = document.createElement("div");
+    meta.className = "chat-msg-meta";
+
+    const name = document.createElement("span");
+    name.className = "chat-msg-name";
+    name.textContent = message.mine ? "You" : message.fromName;
+
+    const time = document.createElement("time");
+    time.className = "chat-msg-time";
+    const date = new Date(message.at);
+    if (!Number.isNaN(date.getTime())) {
+      time.dateTime = date.toISOString();
+      time.textContent = formatChatTime(message.at);
+      time.title = date.toLocaleString();
+    }
+
+    meta.append(name, time);
+    article.append(meta);
+
+    const body = document.createElement("div");
+    body.className = "chat-msg-body";
+
+    if (message.image) {
+      const imageButton = document.createElement("button");
+      imageButton.type = "button";
+      imageButton.className = "chat-msg-image";
+      imageButton.setAttribute(
+        "aria-label",
+        `Open picture shared by ${message.mine ? "you" : message.fromName}`
+      );
+
+      const image = document.createElement("img");
+      image.src = message.image;
+      image.alt = `Picture shared by ${message.mine ? "you" : message.fromName}`;
+      image.loading = "lazy";
+      image.decoding = "async";
+
+      imageButton.append(image);
+      imageButton.addEventListener("click", () => {
+        openChatLightbox(message.image, image.alt);
+      });
+      body.append(imageButton);
+    }
+
+    if (message.text) {
+      const text = document.createElement("p");
+      text.className = "chat-msg-text";
+      text.textContent = message.text;
+      body.append(text);
+    }
+
+    article.append(body);
+
+    if (message.mine) {
+      const status = document.createElement("span");
+      status.className = "chat-msg-status";
+      article.append(status);
+      updateChatMessageNode(article, message);
+    }
+
+    return article;
+  }
+
+  /**
+   * Add a message or update the optimistic copy with the server echo.
+   * Returns the stored record so callers can keep any local metadata.
+   */
+  function addChatMessage(message, { announce = false } = {}) {
+    const existing = state.chatMessages.get(message.id);
+    if (existing) {
+      if (existing.pendingTimer) {
+        window.clearTimeout(existing.pendingTimer);
+        existing.pendingTimer = null;
+      }
+      existing.pending = message.pending === true;
+      existing.failed = message.failed === true;
+      existing.failReason = message.failReason || "";
+      if (Number.isFinite(message.at)) existing.at = message.at;
+
+      const node = el.chatLog.querySelector(`[data-chat-id="${message.id}"]`);
+      if (node) updateChatMessageNode(node, existing);
+      return existing;
+    }
+
+    const nearBottom =
+      el.chatLog.scrollHeight - el.chatLog.scrollTop - el.chatLog.clientHeight < 80;
+
+    const record = {
+      ...message,
+      pending: message.pending === true,
+      failed: message.failed === true,
+    };
+
+    state.chatMessages.set(record.id, record);
+    el.chatLog.append(renderChatMessage(record));
+
+    // Keep the DOM and the map from growing without bound during long calls.
+    const nodes = el.chatLog.querySelectorAll(".chat-msg");
+    for (let index = 0; index < nodes.length - CHAT_MAX_MESSAGES; index += 1) {
+      const node = nodes[index];
+      state.chatMessages.delete(node.dataset.chatId);
+      node.remove();
+    }
+
+    updateChatEmpty();
+
+    if (nearBottom) {
+      window.requestAnimationFrame(() => {
+        el.chatLog.scrollTop = el.chatLog.scrollHeight;
+      });
+    }
+
+    if (announce && !record.mine && !isChatVisible()) {
+      state.chatUnread += 1;
+      updateChatUnread();
+    }
+
+    return record;
+  }
+
+  function markChatMessage(id, patch) {
+    const message = state.chatMessages.get(id);
+    if (!message) return;
+    Object.assign(message, patch);
+    const node = el.chatLog.querySelector(`[data-chat-id="${id}"]`);
+    if (node) updateChatMessageNode(node, message);
+  }
+
+  function receiveChatMessage(payload) {
+    if (!state.joined || !payload || typeof payload !== "object") return;
+
+    const id = typeof payload.id === "string" ? payload.id : "";
+    if (!/^[A-Za-z0-9_-]{6,64}$/.test(id)) return;
+
+    const text =
+      typeof payload.text === "string" ? payload.text.slice(0, CHAT_MAX_LENGTH) : "";
+    const image =
+      typeof payload.image === "string" && payload.image.startsWith("data:image/")
+        ? payload.image
+        : "";
+
+    if (!text && !image) return;
+
+    const existing = state.chatMessages.get(id);
+    addChatMessage(
+      {
+        id,
+        from: typeof payload.from === "string" ? payload.from : "",
+        fromName: cleanName(payload.fromName) || "Crewmate",
+        at: Number(payload.at) || Date.now(),
+        text,
+        image,
+        mine: existing ? existing.mine : payload.from === socket.id,
+        pending: false,
+        failed: false,
+      },
+      { announce: true }
+    );
+  }
+
+  function updateChatSendState() {
+    const hasText = el.chatInput.value.trim().length > 0;
+    const hasImage = Boolean(state.chatAttachment);
+    el.chatSendBtn.disabled =
+      !state.joined || state.chatImageBusy || (!hasText && !hasImage);
+  }
+
+  function autoGrowChatInput() {
+    el.chatInput.style.height = "auto";
+    el.chatInput.style.height = `${Math.min(el.chatInput.scrollHeight, 112)}px`;
+  }
+
+  function buildEmojiPanel() {
+    const fragment = document.createDocumentFragment();
+    for (const emoji of CHAT_EMOJIS) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "emoji-btn";
+      button.textContent = emoji;
+      button.setAttribute("aria-label", `Insert ${emoji}`);
+      button.addEventListener("click", () => insertEmoji(emoji));
+      fragment.append(button);
+    }
+    el.emojiPanel.replaceChildren(fragment);
+  }
+
+  function toggleEmojiPanel(force) {
+    const open = typeof force === "boolean" ? force : el.emojiPanel.hidden;
+    el.emojiPanel.hidden = !open;
+    el.emojiBtn.setAttribute("aria-expanded", String(open));
+    el.emojiBtn.classList.toggle("is-active", open);
+    if (open) el.emojiPanel.scrollTop = 0;
+  }
+
+  function insertEmoji(emoji) {
+    const input = el.chatInput;
+    const start = input.selectionStart ?? input.value.length;
+    const end = input.selectionEnd ?? input.value.length;
+    input.setRangeText(emoji, start, end, "end");
+    input.focus();
+    autoGrowChatInput();
+    updateChatSendState();
+  }
+
+  function readFileAsDataUrl(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        resolve(typeof reader.result === "string" ? reader.result : "");
+      };
+      reader.onerror = () => reject(new Error("Couldn't read that picture."));
+      reader.readAsDataURL(file);
+    });
+  }
+
+  function loadImageFile(file) {
+    return new Promise((resolve, reject) => {
+      const url = URL.createObjectURL(file);
+      const image = new Image();
+      image.onload = () => {
+        URL.revokeObjectURL(url);
+        resolve(image);
+      };
+      image.onerror = () => {
+        URL.revokeObjectURL(url);
+        reject(new Error("That picture couldn't be opened."));
+      };
+      image.src = url;
+    });
+  }
+
+  /**
+   * Downscale + re-encode big photos so they stay under the server's 3 MB
+   * limit. Small GIFs pass through untouched to preserve their animation.
+   */
+  async function prepareChatImage(file) {
+    if (!file || !file.type.startsWith("image/")) {
+      throw new Error("Choose a picture file.");
+    }
+    if (file.size > CHAT_IMAGE_INPUT_MAX) {
+      throw new Error("That picture is too large. Pick one under 15 MB.");
+    }
+
+    if (file.type === "image/gif") {
+      const dataUrl = await readFileAsDataUrl(file);
+      if (dataUrl.length > CHAT_IMAGE_DATA_URL_MAX) {
+        throw new Error("That GIF is too large after encoding. Try a smaller one.");
+      }
+      return {
+        dataUrl,
+        name: file.name || "picture.gif",
+        bytes: dataUrlBytes(dataUrl),
+      };
+    }
+
+    const image = await loadImageFile(file);
+    const width = image.naturalWidth || image.width;
+    const height = image.naturalHeight || image.height;
+    if (!width || !height) throw new Error("That picture couldn't be opened.");
+
+    let scale = Math.min(1, CHAT_IMAGE_DIMENSION / Math.max(width, height));
+    let quality = 0.85;
+    let dataUrl = "";
+
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.round(width * scale));
+      canvas.height = Math.max(1, Math.round(height * scale));
+
+      const context = canvas.getContext("2d");
+      if (!context) throw new Error("Your browser couldn't prepare that picture.");
+
+      // JPEG has no alpha channel; a soft white backdrop keeps screenshots
+      // looking clean instead of turning transparent areas black.
+      context.fillStyle = "#ffffff";
+      context.fillRect(0, 0, canvas.width, canvas.height);
+      context.drawImage(image, 0, 0, canvas.width, canvas.height);
+      dataUrl = canvas.toDataURL("image/jpeg", quality);
+
+      if (dataUrl.length <= CHAT_IMAGE_DATA_URL_MAX) break;
+      if (quality > 0.72) {
+        quality = 0.7;
+      } else {
+        scale *= 0.72;
+      }
+    }
+
+    if (!dataUrl || dataUrl.length > CHAT_IMAGE_DATA_URL_MAX) {
+      throw new Error("That picture is still too large after resizing. Try a smaller one.");
+    }
+
+    const stem = (file.name || "picture").replace(/\.[^.]+$/, "");
+    return {
+      dataUrl,
+      name: `${stem || "picture"}.jpg`,
+      bytes: dataUrlBytes(dataUrl),
+    };
+  }
+
+  function setChatAttachment(attachment) {
+    state.chatAttachment = attachment || null;
+    const hasAttachment = Boolean(attachment);
+
+    el.chatAttachment.hidden = !hasAttachment;
+    if (hasAttachment) {
+      el.chatAttachmentImage.src = attachment.dataUrl;
+      el.chatAttachmentName.textContent = attachment.name;
+      el.chatAttachmentSize.textContent = `${formatBytes(attachment.bytes)} · ready to send`;
+    } else {
+      el.chatAttachmentImage.removeAttribute("src");
+      el.chatAttachmentName.textContent = "picture.jpg";
+      el.chatAttachmentSize.textContent = "0 KB";
+    }
+
+    updateChatSendState();
+  }
+
+  function clearChatAttachment() {
+    setChatAttachment(null);
+  }
+
+  async function attachChatImage(file) {
+    if (!file || state.chatImageBusy) return;
+
+    state.chatImageBusy = true;
+    el.imageBtn.classList.add("is-busy");
+    el.imageBtn.disabled = true;
+    updateChatSendState();
+
+    try {
+      const prepared = await prepareChatImage(file);
+      if (!state.joined) return;
+      setChatAttachment(prepared);
+      el.chatInput.focus();
+    } catch (error) {
+      toast(error?.message || "Couldn't add that picture.", "error", 5000);
+    } finally {
+      state.chatImageBusy = false;
+      el.imageBtn.classList.remove("is-busy");
+      el.imageBtn.disabled = false;
+      updateChatSendState();
+    }
+  }
+
+  function sendChat() {
+    if (!state.joined || state.chatImageBusy) return;
+
+    const text = el.chatInput.value.replace(/\r\n?/g, "\n").trim().slice(0, CHAT_MAX_LENGTH);
+    const attachment = state.chatAttachment;
+    if (!text && !attachment) return;
+
+    if (!socket.connected) {
+      toast("You're offline — try again once the connection is back.", "warning", 5000);
+      return;
+    }
+
+    const id = newMessageId();
+    const message = {
+      id,
+      from: socket.id,
+      fromName: state.name || "You",
+      at: Date.now(),
+      text,
+      image: attachment ? attachment.dataUrl : "",
+      mine: true,
+      pending: true,
+    };
+
+    message.pendingTimer = window.setTimeout(() => {
+      const current = state.chatMessages.get(id);
+      if (!current || !current.pending) return;
+      current.pendingTimer = null;
+      markChatMessage(id, {
+        pending: false,
+        failed: true,
+        failReason: "Timed out — check your connection",
+      });
+    }, 20_000);
+
+    addChatMessage(message);
+
+    el.chatInput.value = "";
+    clearChatAttachment();
+    autoGrowChatInput();
+    updateChatSendState();
+    toggleEmojiPanel(false);
+
+    socket.emit("chat", { id, text, image: message.image }, (result) => {
+      const current = state.chatMessages.get(id);
+      if (!current) return;
+      if (current.pendingTimer) {
+        window.clearTimeout(current.pendingTimer);
+        current.pendingTimer = null;
+      }
+
+      if (result?.ok) {
+        markChatMessage(id, {
+          pending: false,
+          failed: false,
+          at: Number(result.at) || current.at,
+        });
+      } else {
+        markChatMessage(id, {
+          pending: false,
+          failed: true,
+          failReason: result?.error || "Not delivered",
+        });
+        toast(result?.error || "Your message wasn't delivered.", "error", 5000);
+      }
+    });
+  }
+
+  function openChatLightbox(src, alt) {
+    if (!src) return;
+    chatLightboxReturnFocus = document.activeElement;
+    el.chatLightboxImage.src = src;
+    el.chatLightboxImage.alt = alt || "Shared picture";
+    el.chatLightbox.hidden = false;
+    document.body.classList.add("lightbox-open");
+    el.chatLightboxClose.focus();
+  }
+
+  function closeChatLightbox() {
+    if (el.chatLightbox.hidden) return;
+    el.chatLightbox.hidden = true;
+    el.chatLightboxImage.removeAttribute("src");
+    el.chatLightboxImage.alt = "Shared picture";
+    document.body.classList.remove("lightbox-open");
+    if (chatLightboxReturnFocus && typeof chatLightboxReturnFocus.focus === "function") {
+      chatLightboxReturnFocus.focus();
+    }
+    chatLightboxReturnFocus = null;
+  }
+
+  function resetChat() {
+    state.chatMessages.clear();
+    el.chatLog.querySelectorAll(".chat-msg").forEach((node) => node.remove());
+    updateChatEmpty();
+    clearChatAttachment();
+    el.chatInput.value = "";
+    autoGrowChatInput();
+    updateChatSendState();
+    toggleEmojiPanel(false);
+    closeChatLightbox();
+    clearChatUnread();
+    setChatOpen(false);
+  }
+
+  // =========================================================================
+  // 14. Join flow
   // =========================================================================
   async function handleJoin(event) {
     event.preventDefault();
@@ -1981,6 +2595,116 @@
       void unlockAllAudio();
     });
 
+    // Crew chat -------------------------------------------------------------
+    el.chatForm.addEventListener("submit", (event) => {
+      event.preventDefault();
+      sendChat();
+    });
+
+    el.chatInput.addEventListener("input", () => {
+      autoGrowChatInput();
+      updateChatSendState();
+    });
+
+    el.chatInput.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" || event.shiftKey || event.isComposing) return;
+      event.preventDefault();
+      sendChat();
+    });
+
+    // Paste a screenshot straight from the clipboard.
+    el.chatInput.addEventListener("paste", (event) => {
+      const files = Array.from(event.clipboardData?.files || []);
+      const image = files.find((file) => file.type.startsWith("image/"));
+      if (!image) return;
+      event.preventDefault();
+      void attachChatImage(image);
+    });
+
+    el.emojiBtn.addEventListener("click", () => toggleEmojiPanel());
+    el.imageBtn.addEventListener("click", () => {
+      toggleEmojiPanel(false);
+      el.imageInput.click();
+    });
+
+    el.imageInput.addEventListener("change", () => {
+      const file = el.imageInput.files?.[0] || null;
+      el.imageInput.value = "";
+      if (file) void attachChatImage(file);
+    });
+
+    el.chatAttachmentRemove.addEventListener("click", () => {
+      clearChatAttachment();
+      el.chatInput.focus();
+    });
+
+    el.chatBtn.addEventListener("click", () => setChatOpen(!state.chatOpen));
+    el.chatCloseBtn.addEventListener("click", () => setChatOpen(false));
+    el.chatBackdrop.addEventListener("click", () => setChatOpen(false));
+    el.chatLightboxClose.addEventListener("click", closeChatLightbox);
+    el.chatLightbox.addEventListener("click", (event) => {
+      if (event.target === el.chatLightbox) closeChatLightbox();
+    });
+
+    document.addEventListener("pointerdown", (event) => {
+      if (el.emojiPanel.hidden) return;
+      if (el.emojiPanel.contains(event.target) || el.emojiBtn.contains(event.target)) return;
+      toggleEmojiPanel(false);
+    });
+
+    document.addEventListener("keydown", (event) => {
+      if (event.key !== "Escape") return;
+      if (!el.chatLightbox.hidden) {
+        closeChatLightbox();
+      } else if (!el.emojiPanel.hidden) {
+        toggleEmojiPanel(false);
+        el.chatInput.focus();
+      } else if (state.chatOpen) {
+        setChatOpen(false);
+      }
+    });
+
+    // Drag a picture anywhere onto the chat panel.
+    const setChatDragging = (active) => {
+      el.chatPanel.classList.toggle("is-dragging", active);
+    };
+    for (const eventName of ["dragenter", "dragover"]) {
+      el.chatPanel.addEventListener(eventName, (event) => {
+        if (!event.dataTransfer?.types?.includes("Files")) return;
+        event.preventDefault();
+        setChatDragging(true);
+      });
+    }
+    el.chatPanel.addEventListener("dragleave", (event) => {
+      if (!el.chatPanel.contains(event.relatedTarget)) setChatDragging(false);
+    });
+    el.chatPanel.addEventListener("drop", (event) => {
+      event.preventDefault();
+      setChatDragging(false);
+      const files = Array.from(event.dataTransfer?.files || []);
+      const image = files.find((file) => file.type.startsWith("image/"));
+      if (image) void attachChatImage(image);
+    });
+
+    const chatDrawerMedia = window.matchMedia(CHAT_DRAWER_QUERY);
+    const handleChatDrawerChange = () => {
+      if (!chatDrawerMedia.matches) {
+        setChatOpen(false);
+        clearChatUnread();
+      }
+    };
+    if (typeof chatDrawerMedia.addEventListener === "function") {
+      chatDrawerMedia.addEventListener("change", handleChatDrawerChange);
+    } else if (typeof chatDrawerMedia.addListener === "function") {
+      chatDrawerMedia.addListener(handleChatDrawerChange);
+    }
+
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible" && isChatVisible()) {
+        clearChatUnread();
+      }
+    });
+
     document.addEventListener("keydown", (event) => {
       if (!state.joined || event.repeat) return;
       if (event.altKey || event.ctrlKey || event.metaKey) return;
@@ -2045,6 +2769,10 @@
     }
 
     setConnection("connecting", "Connecting…");
+    buildEmojiPanel();
+    updateChatEmpty();
+    updateChatUnread();
+    updateChatSendState();
     updateMicUI();
     updateScreenUI();
     updateRoomUI();
