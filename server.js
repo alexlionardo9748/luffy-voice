@@ -31,7 +31,7 @@ const { Server } = require("socket.io");
 const PORT = clampInt(process.env.PORT, 3000, 0, 65535);
 const HOST = process.env.HOST || "0.0.0.0";
 const IS_PRODUCTION = process.env.NODE_ENV === "production";
-const PUBLIC_DIR = path.join(__dirname, "public");
+const PUBLIC_DIR = __dirname;
 
 /** Mesh calls get expensive fast. 8 people = 7 upstream streams per peer. */
 const MAX_ROOM_PEERS = clampInt(process.env.MAX_ROOM_PEERS, 8, 2, 12);
