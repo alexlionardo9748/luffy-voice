@@ -83,6 +83,12 @@
     chatLightbox: $("#chatLightbox"),
     chatLightboxImage: $("#chatLightboxImage"),
     chatLightboxClose: $("#chatLightboxClose"),
+
+    // Stream quality
+    qualitySelect: $("#qualitySelect"),
+    qualitySelectCall: $("#qualitySelectCall"),
+    qualityHint: $("#qualityHint"),
+    qualityHintCall: $("#qualityHintCall"),
   };
 
   // =========================================================================
@@ -99,6 +105,90 @@
 
   const STORAGE_NAME = "luffy:name";
   const STORAGE_VOLUMES = "luffy:volumes:v1";
+  const STORAGE_QUALITY = "luffy:quality:v1";
+  const DEFAULT_QUALITY = "saver";
+
+  /**
+   * Stream-quality presets. Each preset controls three things:
+   *   • capture  — constraints handed to getDisplayMedia()
+   *   • video    — encoder ceiling applied through RTCRtpSender.setParameters()
+   *   • opus     — Opus parameters written into the SDP (DTX is the big win:
+   *                no packets at all while nobody is talking)
+   *
+   * `video: null` means voice-only: the video sender is deactivated and screen
+   * sharing is disabled while that preset is selected.
+   *
+   * Figures are ceilings, not guarantees. Actual usage also depends on how much
+   * the screen changes and how much people talk.
+   */
+  const QUALITY_PRESETS = {
+    voice: {
+      id: "voice",
+      label: "Voice only",
+      short: "Voice only",
+      detail: "No screen video. Smallest possible data use.",
+      audioBitrate: 16_000,
+      video: null,
+      capture: null,
+      contentHint: "speech",
+      opus: { maxaveragebitrate: 16_000, usedtx: true, useinbandfec: false },
+      imageDimension: 1_000,
+      imageQuality: 0.78,
+    },
+    saver: {
+      id: "saver",
+      label: "Data saver",
+      short: "Saver",
+      detail: "Voice-first with a small, low-motion screen stream (under ~1 MB/min).",
+      audioBitrate: 16_000,
+      video: { width: 640, height: 360, frameRate: 5, maxBitrate: 80_000 },
+      capture: { width: 1280, height: 720, frameRate: 15 },
+      contentHint: "text",
+      opus: { maxaveragebitrate: 16_000, usedtx: true, useinbandfec: false },
+      imageDimension: 1_000,
+      imageQuality: 0.8,
+    },
+    low: {
+      id: "low",
+      label: "Low",
+      short: "Low",
+      detail: "480p screen at 15 fps. Good on mobile data.",
+      audioBitrate: 24_000,
+      video: { width: 854, height: 480, frameRate: 15, maxBitrate: 500_000 },
+      capture: { width: 1920, height: 1080, frameRate: 20 },
+      contentHint: "text",
+      opus: { maxaveragebitrate: 24_000, usedtx: true, useinbandfec: true },
+      imageDimension: 1_400,
+      imageQuality: 0.82,
+    },
+    medium: {
+      id: "medium",
+      label: "Balanced",
+      short: "Balanced",
+      detail: "720p screen at 30 fps. A good everyday default.",
+      audioBitrate: 32_000,
+      video: { width: 1280, height: 720, frameRate: 30, maxBitrate: 1_200_000 },
+      capture: { width: 1920, height: 1080, frameRate: 30 },
+      contentHint: "text",
+      opus: { maxaveragebitrate: 32_000, usedtx: true, useinbandfec: true },
+      imageDimension: 1_600,
+      imageQuality: 0.85,
+    },
+    high: {
+      id: "high",
+      label: "High",
+      short: "High",
+      detail: "1080p screen at 60 fps. Needs a strong connection.",
+      audioBitrate: 48_000,
+      video: { width: 1920, height: 1080, frameRate: 60, maxBitrate: 4_000_000 },
+      capture: { width: 1920, height: 1080, frameRate: 60 },
+      contentHint: "detail",
+      opus: { maxaveragebitrate: 48_000, usedtx: true, useinbandfec: true },
+      imageDimension: 1_600,
+      imageQuality: 0.86,
+    },
+  };
+  const QUALITY_ORDER = ["voice", "saver", "low", "medium", "high"];
 
   // Chat
   const CHAT_MAX_LENGTH = 2_000;
@@ -173,6 +263,10 @@
     silentScreenTrack: null,
     blankVideoTrack: null,
     keepAlive: [],
+
+    // Stream quality
+    quality: DEFAULT_QUALITY,
+    serverDefaultQuality: "",
   };
 
   const rtcSupported = typeof window.RTCPeerConnection === "function";
@@ -364,6 +458,281 @@
       window.localStorage.setItem(STORAGE_VOLUMES, JSON.stringify(store));
     } catch {
       /* storage unavailable */
+    }
+  }
+
+  // =========================================================================
+  // 4b. Stream quality / bandwidth presets
+  // =========================================================================
+  function getQualityPreset(id = state.quality) {
+    return QUALITY_PRESETS[id] || QUALITY_PRESETS[DEFAULT_QUALITY];
+  }
+
+  function readSavedQuality() {
+    try {
+      const saved = window.localStorage.getItem(STORAGE_QUALITY) || "";
+      return QUALITY_PRESETS[saved] ? saved : "";
+    } catch {
+      return "";
+    }
+  }
+
+  function saveQuality(id) {
+    try {
+      window.localStorage.setItem(STORAGE_QUALITY, id);
+    } catch {
+      /* private mode */
+    }
+  }
+
+  /**
+   * Rough "how much will this use per minute" figure. Covers the media
+   * ceilings only, not signaling (a few KB/min) or chat.
+   */
+  function qualityMegabytesPerMinute(preset) {
+    const shareAudio = preset.video ? Math.max(preset.audioBitrate, 24_000) : 0;
+    const bitsPerSecond = preset.audioBitrate + shareAudio + (preset.video?.maxBitrate || 0);
+    return (bitsPerSecond * 60) / 8 / 1_000_000;
+  }
+
+  function qualityBandwidthLabel(preset) {
+    const mb = qualityMegabytesPerMinute(preset);
+    if (mb < 0.1) return "< 0.1 MB/min out";
+    if (mb < 1) return `~${mb.toFixed(2)} MB/min out`;
+    return `~${mb.toFixed(1)} MB/min out`;
+  }
+
+  function qualitySummary(preset) {
+    if (!preset.video) {
+      return `${preset.label}: no screen video, ${qualityBandwidthLabel(preset)} (less while quiet).`;
+    }
+    return `${preset.label}: ${preset.video.width}×${preset.video.height} at ${preset.video.frameRate} fps, ${qualityBandwidthLabel(preset)}.`;
+  }
+
+  function populateQualitySelects() {
+    for (const select of [el.qualitySelect, el.qualitySelectCall]) {
+      if (!select) continue;
+      const fragment = document.createDocumentFragment();
+      for (const id of QUALITY_ORDER) {
+        const preset = QUALITY_PRESETS[id];
+        const option = document.createElement("option");
+        option.value = id;
+        option.textContent = `${preset.label} — ${qualityBandwidthLabel(preset)}`;
+        fragment.append(option);
+      }
+      select.replaceChildren(fragment);
+    }
+  }
+
+  function updateQualityUi() {
+    const preset = getQualityPreset();
+
+    if (el.qualitySelect) el.qualitySelect.value = preset.id;
+    if (el.qualitySelectCall) el.qualitySelectCall.value = preset.id;
+
+    if (el.qualityHint) el.qualityHint.textContent = qualitySummary(preset);
+    if (el.qualityHintCall) el.qualityHintCall.textContent = qualitySummary(preset);
+
+    updateScreenUI();
+  }
+
+  /**
+   * Change presets live: re-tune every active peer, stop an existing screen
+   * share if the new preset is voice-only, and remember the choice.
+   */
+  function setQuality(id, { silent = false, apply = true, persist = true } = {}) {
+    const next = QUALITY_PRESETS[id] ? id : DEFAULT_QUALITY;
+    const changed = state.quality !== next;
+
+    state.quality = next;
+    if (persist) saveQuality(next);
+    updateQualityUi();
+
+    if (!changed) return;
+
+    const preset = getQualityPreset();
+
+    if (apply) {
+      if (!preset.video && (state.sharing || state.screenStream)) {
+        void stopScreenShare({ silent: true });
+      }
+      for (const peer of state.peers.values()) {
+        void applyQualityToPeer(peer);
+      }
+    }
+
+    if (!silent) {
+      toast(`Quality set to ${preset.label.toLowerCase()}.`, "success", 2600);
+    }
+  }
+
+  /** Apply the active preset to one peer's audio + video senders. */
+  async function applyQualityToPeer(peer) {
+    const preset = getQualityPreset();
+    const jobs = [];
+
+    if (peer?.tx?.video?.sender) {
+      jobs.push(tuneVideoSender(peer.tx.video.sender, preset));
+    }
+    if (peer?.tx?.mic?.sender) {
+      jobs.push(tuneAudioSender(peer.tx.mic.sender, preset, "mic"));
+    }
+    if (peer?.tx?.screenAudio?.sender) {
+      jobs.push(tuneAudioSender(peer.tx.screenAudio.sender, preset, "screenAudio"));
+    }
+
+    await Promise.allSettled(jobs);
+  }
+
+  async function tuneVideoSender(sender, preset) {
+    try {
+      const parameters = sender.getParameters();
+      if (!parameters.encodings || parameters.encodings.length === 0) {
+        parameters.encodings = [{}];
+      }
+
+      for (const encoding of parameters.encodings) {
+        if (!preset.video) {
+          encoding.active = false;
+          continue;
+        }
+
+        // Only transmit while a screen is actually being shared. This keeps
+        // the negotiated m-line alive without sending the blank placeholder.
+        encoding.active = Boolean(state.sharing);
+        encoding.maxBitrate = preset.video.maxBitrate;
+        encoding.maxFramerate = preset.video.frameRate;
+
+        // Scale the captured screen down to the preset's output size. Chrome
+        // accepts fractional values, so 1920 -> 854 becomes x2.25, not x3.
+        const settings = state.screenTrack?.getSettings?.() || {};
+        const sourceWidth = Number(settings.width) || 0;
+        if (sourceWidth > preset.video.width) {
+          const scale = sourceWidth / preset.video.width;
+          encoding.scaleResolutionDownBy = Math.max(1, Math.min(8, Number(scale.toFixed(2))));
+        } else {
+          encoding.scaleResolutionDownBy = 1;
+        }
+      }
+
+      if ("degradationPreference" in parameters) {
+        parameters.degradationPreference = "maintain-resolution";
+      }
+
+      await sender.setParameters(parameters);
+    } catch {
+      // Browsers can reject parameter changes before negotiation settles.
+    }
+  }
+
+  async function tuneAudioSender(sender, preset, kind) {
+    try {
+      const parameters = sender.getParameters();
+      if (!parameters.encodings || parameters.encodings.length === 0) {
+        parameters.encodings = [{}];
+      }
+
+      for (const encoding of parameters.encodings) {
+        // Stop paying for packets we do not need: muted mics and shares with
+        // no captured audio are deactivated entirely until they come back.
+        encoding.active =
+          kind === "screenAudio"
+            ? Boolean(state.sharingAudio)
+            : Boolean(state.micTrack && !state.micMuted);
+
+        // Voice gets the full preset budget; share audio stays a touch higher
+        // so music/system sounds do not turn to mush in saver mode.
+        encoding.maxBitrate =
+          kind === "screenAudio"
+            ? Math.max(preset.audioBitrate, 24_000)
+            : preset.audioBitrate;
+        if ("networkPriority" in encoding) {
+          encoding.networkPriority = kind === "mic" ? "high" : "low";
+        }
+      }
+
+      await sender.setParameters(parameters);
+    } catch {
+      // Older browsers may ignore audio bitrate ceilings.
+    }
+  }
+
+  /**
+   * Write Opus preferences into an SDP blob. `usedtx=1` lets the encoder stop
+   * sending packets during silence, which is where the biggest savings come
+   * from on a voice call. Munging is wrapped so a browser that dislikes it
+   * still negotiates with the original description.
+   */
+  function tuneOpusSdp(sdp, preset) {
+    if (typeof sdp !== "string" || !preset?.opus) return sdp;
+
+    const lines = sdp.split("\r\n");
+    const opusPayloads = new Set();
+
+    for (const line of lines) {
+      const match = /^a=rtpmap:(\d+) opus\/48000(?:\/2)?$/i.exec(line);
+      if (match) opusPayloads.add(match[1]);
+    }
+    if (opusPayloads.size === 0) return sdp;
+
+    for (const payload of opusPayloads) {
+      const fmtpPrefix = `a=fmtp:${payload} `;
+      const fmtpIndexes = [];
+      const rtpmapIndexes = [];
+
+      for (let index = 0; index < lines.length; index += 1) {
+        if (lines[index].startsWith(fmtpPrefix)) fmtpIndexes.push(index);
+
+        const match = /^a=rtpmap:(\d+) opus\/48000(?:\/2)?$/i.exec(lines[index]);
+        if (match && match[1] === payload) rtpmapIndexes.push(index);
+      }
+
+      const parameters = new Map();
+
+      // Preserve unknown/optional parameters Chrome may have added.
+      if (fmtpIndexes.length > 0) {
+        const existing = lines[fmtpIndexes[0]].slice(fmtpPrefix.length);
+        for (const part of existing.split(";")) {
+          const [key, ...rest] = part.split("=");
+          const name = key.trim();
+          if (name) parameters.set(name, rest.join("=").trim());
+        }
+      }
+
+      parameters.set("maxaveragebitrate", String(preset.opus.maxaveragebitrate));
+      parameters.set("stereo", "0");
+      parameters.set("sprop-stereo", "0");
+      parameters.set("usedtx", preset.opus.usedtx ? "1" : "0");
+      parameters.set("useinbandfec", preset.opus.useinbandfec ? "1" : "0");
+      parameters.set("minptime", "10");
+
+      const fmtp = `${fmtpPrefix}${[...parameters]
+        .map(([key, value]) => (value ? `${key}=${value}` : key))
+        .join(";")}`;
+
+      if (fmtpIndexes.length > 0) {
+        for (const index of fmtpIndexes) lines[index] = fmtp;
+      }
+
+      // Make sure every Opus m-line (mic, screen audio, ...) carries the
+      // parameters, including sections that had no fmtp line to begin with.
+      // Insert back-to-front so earlier indexes stay valid.
+      for (const index of rtpmapIndexes.reverse()) {
+        const next = lines[index + 1] || "";
+        if (!next.startsWith(fmtpPrefix)) {
+          lines.splice(index + 1, 0, fmtp);
+        }
+      }
+    }
+
+    return lines.join("\r\n");
+  }
+
+  function tuneDescription(description, preset) {
+    try {
+      return { type: description.type, sdp: tuneOpusSdp(description.sdp, preset) };
+    } catch {
+      return description;
     }
   }
 
@@ -699,6 +1068,17 @@
   async function startScreenShare() {
     if (!state.joined || state.sharing || state.screenBusy) return;
 
+    const preset = getQualityPreset();
+
+    if (!preset.video) {
+      toast(
+        "Voice-only quality is on. Pick Data saver or higher to share your screen.",
+        "warning",
+        5200
+      );
+      return;
+    }
+
     if (!navigator.mediaDevices?.getDisplayMedia) {
       toast("Screen sharing isn't supported in this browser.", "error");
       return;
@@ -709,11 +1089,12 @@
 
     try {
       const stream = await navigator.mediaDevices.getDisplayMedia({
-        // Ask for crisp 1080p at up to 60 fps. Browsers may grant less.
+        // Capture at the preset's ceiling; the encoder then scales the output
+        // down to the smaller target without sending extra pixels.
         video: {
-          frameRate: { ideal: 60, max: 60 },
-          width: { ideal: 1920, max: 1920 },
-          height: { ideal: 1080, max: 1080 },
+          frameRate: { ideal: preset.capture.frameRate, max: preset.capture.frameRate },
+          width: { ideal: preset.capture.width, max: preset.capture.width },
+          height: { ideal: preset.capture.height, max: preset.capture.height },
         },
         audio: true,
         // Chromium display-capture hints (ignored elsewhere).
@@ -728,7 +1109,7 @@
         throw new Error("No screen video track was returned.");
       }
 
-      videoTrack.contentHint = "detail";
+      videoTrack.contentHint = preset.contentHint;
 
       state.screenStream = stream;
       state.screenTrack = videoTrack;
@@ -832,25 +1213,9 @@
     await Promise.all(jobs);
   }
 
-  /** Ask the browser encoder for a generous screen-share bitrate. */
+  /** Apply the active quality preset to every active peer. */
   async function tuneScreenSender(peer) {
-    const sender = peer?.tx?.video?.sender;
-    if (!sender) return;
-
-    try {
-      const parameters = sender.getParameters();
-      if (!parameters.encodings || parameters.encodings.length === 0) {
-        parameters.encodings = [{}];
-      }
-      parameters.encodings[0].maxBitrate = 4_500_000;
-      parameters.encodings[0].maxFramerate = 60;
-      if ("degradationPreference" in parameters) {
-        parameters.degradationPreference = "maintain-resolution";
-      }
-      await sender.setParameters(parameters);
-    } catch {
-      // Some browsers reject parameter changes before negotiation settles.
-    }
+    await applyQualityToPeer(peer);
   }
 
   // =========================================================================
@@ -871,14 +1236,21 @@
 
   function updateScreenUI() {
     const supported = Boolean(navigator.mediaDevices?.getDisplayMedia);
+    const preset = getQualityPreset();
+    const qualityAllowsVideo = Boolean(preset.video);
 
     el.screenBtn.classList.toggle("is-active", state.sharing);
     el.screenBtn.setAttribute("aria-pressed", String(state.sharing));
     el.screenBtn.setAttribute("aria-label", "Share your screen");
-    el.screenBtn.title = state.sharing ? "Stop sharing (S)" : "Share screen (S)";
+    el.screenBtn.title = !qualityAllowsVideo
+      ? "Screen sharing is off in Voice only quality"
+      : state.sharing
+        ? "Stop sharing (S)"
+        : "Share screen (S)";
     el.screenLabel.textContent = state.sharing ? "Stop share" : "Share";
     setIcon(el.screenBtn, state.sharing ? "#icon-screen-off" : "#icon-screen");
-    el.screenBtn.disabled = !state.joined || !supported || state.screenBusy;
+    el.screenBtn.disabled =
+      !state.joined || !supported || state.screenBusy || !qualityAllowsVideo;
   }
 
   function updateRoomUI() {
@@ -1486,8 +1858,10 @@
     try {
       const offer = await pc.createOffer();
       if (peer.pc !== pc) return;
-      await pc.setLocalDescription(offer);
+      await pc.setLocalDescription(tuneDescription(offer, getQualityPreset()));
       if (peer.pc !== pc || !socket.connected) return;
+
+      await applyQualityToPeer(peer);
 
       socket.emit("offer", {
         to: peerId,
@@ -1531,7 +1905,7 @@
       if (peer.pc !== pc) return;
 
       const answer = await pc.createAnswer();
-      await pc.setLocalDescription(answer);
+      await pc.setLocalDescription(tuneDescription(answer, getQualityPreset()));
       if (peer.pc !== pc || !socket.connected) return;
 
       socket.emit("answer", {
@@ -1599,6 +1973,12 @@
       sharing: state.sharing,
       sharingAudio: state.sharingAudio,
     });
+
+    // Mute/share changes also change which encodings should be active, so
+    // re-apply the current quality preset to every peer right away.
+    for (const peer of state.peers.values()) {
+      void applyQualityToPeer(peer);
+    }
   }
 
   function waitForSocket(timeoutMs = 12_000) {
@@ -2295,8 +2675,10 @@
     const height = image.naturalHeight || image.height;
     if (!width || !height) throw new Error("That picture couldn't be opened.");
 
-    let scale = Math.min(1, CHAT_IMAGE_DIMENSION / Math.max(width, height));
-    let quality = 0.85;
+    const imagePreset = getQualityPreset();
+    const maxDimension = imagePreset.imageDimension || CHAT_IMAGE_DIMENSION;
+    let scale = Math.min(1, maxDimension / Math.max(width, height));
+    let quality = imagePreset.imageQuality || 0.85;
     let dataUrl = "";
 
     for (let attempt = 0; attempt < 4; attempt += 1) {
@@ -2316,7 +2698,7 @@
 
       if (dataUrl.length <= CHAT_IMAGE_DATA_URL_MAX) break;
       if (quality > 0.72) {
-        quality = 0.7;
+        quality = Math.max(0.68, quality - 0.12);
       } else {
         scale *= 0.72;
       }
@@ -2562,6 +2944,9 @@
       const response = await fetch("/config.json", { cache: "no-store" });
       if (!response.ok) return DEFAULT_ICE;
       const data = await response.json();
+      if (typeof data.defaultQuality === "string" && QUALITY_PRESETS[data.defaultQuality]) {
+        state.serverDefaultQuality = data.defaultQuality;
+      }
       if (Array.isArray(data.iceServers) && data.iceServers.length > 0) {
         return data.iceServers;
       }
@@ -2581,6 +2966,12 @@
       el.roomInput.focus();
       el.roomInput.select();
     });
+
+    for (const select of [el.qualitySelect, el.qualitySelectCall]) {
+      select?.addEventListener("change", () => {
+        setQuality(select.value, { silent: !state.joined });
+      });
+    }
 
     el.micBtn.addEventListener("click", () => {
       void toggleMic();
@@ -2770,11 +3161,13 @@
 
     setConnection("connecting", "Connecting…");
     buildEmojiPanel();
+    populateQualitySelects();
+    state.quality = readSavedQuality() || DEFAULT_QUALITY;
     updateChatEmpty();
     updateChatUnread();
     updateChatSendState();
     updateMicUI();
-    updateScreenUI();
+    updateQualityUi();
     updateRoomUI();
   }
 
@@ -2785,6 +3178,9 @@
   // Kick off ICE config + connection after handlers are attached.
   const iceConfigReady = loadIceConfig().then((servers) => {
     state.iceServers = servers;
+    if (!readSavedQuality() && state.serverDefaultQuality) {
+      setQuality(state.serverDefaultQuality, { silent: true, apply: false, persist: false });
+    }
   });
 
   window.setInterval(tickMeters, LEVEL_INTERVAL_MS);

@@ -490,7 +490,7 @@
 
     .text-input:focus {
       border-color: rgba(255, 209, 102, 0.65);
-      background: rgba(4, 8, 16, 0.8);
+      background-color: rgba(4, 8, 16, 0.8);
       box-shadow: 0 0 0 4px rgba(255, 209, 102, 0.1);
     }
 
@@ -533,6 +533,34 @@
       color: var(--muted-2);
       font-size: 0.71rem;
       line-height: 1.5;
+    }
+
+    .select-input {
+      cursor: pointer;
+      padding-right: 38px;
+      appearance: none;
+      -webkit-appearance: none;
+      background-image:
+        linear-gradient(45deg, transparent 50%, #c8d2e4 50%),
+        linear-gradient(135deg, #c8d2e4 50%, transparent 50%);
+      background-position:
+        calc(100% - 18px) calc(50% - 2px),
+        calc(100% - 13px) calc(50% - 2px);
+      background-repeat: no-repeat;
+      background-size: 5px 5px, 5px 5px;
+    }
+
+    .select-input option {
+      background: #101626;
+      color: var(--text);
+    }
+
+    .select-input-sm {
+      width: auto;
+      min-width: 198px;
+      padding: 9px 34px 9px 12px;
+      border-radius: 12px;
+      font-size: 0.75rem;
     }
 
     .primary-btn {
@@ -696,6 +724,28 @@
 
     .ghost-btn:active {
       transform: translateY(0);
+    }
+
+    .call-head-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .quality-control {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .quality-control-label {
+      color: var(--muted-2);
+      font-size: 0.62rem;
+      font-weight: 800;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      white-space: nowrap;
     }
 
     /* =====================================================================
@@ -2275,6 +2325,15 @@
         width: 100%;
       }
 
+      .quality-control {
+        flex: 1;
+      }
+
+      .select-input-sm {
+        width: 100%;
+        min-width: 0;
+      }
+
       .ghost-btn {
         width: 100%;
         justify-content: center;
@@ -2577,6 +2636,14 @@
           <p class="field-hint">Letters, numbers, and dashes. Room names are not secret.</p>
         </div>
 
+        <div class="field">
+          <label class="field-label" for="qualitySelect">Stream quality</label>
+          <select class="text-input select-input" id="qualitySelect" name="quality"></select>
+          <p class="field-hint" id="qualityHint">
+            Data saver keeps media usage low. You can change this mid-call.
+          </p>
+        </div>
+
         <button class="primary-btn" id="joinBtn" type="submit">
           <span id="joinBtnLabel">Join the call</span>
           <svg aria-hidden="true"><use href="#icon-arrow"></use></svg>
@@ -2605,6 +2672,15 @@
         </div>
 
         <div class="call-head-actions">
+          <label class="quality-control" for="qualitySelectCall">
+            <span class="quality-control-label">Quality</span>
+            <select
+              class="text-input select-input select-input-sm"
+              id="qualitySelectCall"
+              aria-label="Stream quality"
+              title="Change stream quality and data usage"
+            ></select>
+          </label>
           <button class="ghost-btn" id="copyInviteBtn" type="button">
             <svg aria-hidden="true"><use href="#icon-copy"></use></svg>
             <span>Copy invite link</span>

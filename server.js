@@ -37,6 +37,13 @@ const PUBLIC_DIR = __dirname;
 /** Mesh calls get expensive fast. 8 people = 7 upstream streams per peer. */
 const MAX_ROOM_PEERS = clampInt(process.env.MAX_ROOM_PEERS, 8, 2, 12);
 
+/**
+ * Default stream-quality preset handed to new browsers. Users can override it
+ * in the UI; this only sets the starting point.
+ */
+const QUALITY_IDS = new Set(["voice", "saver", "low", "medium", "high"]);
+const DEFAULT_QUALITY = normalizeQuality(process.env.DEFAULT_QUALITY);
+
 const ROOM_MAX_LENGTH = 32;
 const NAME_MAX_LENGTH = 24;
 const MAX_SDP_LENGTH = 100_000;
@@ -58,6 +65,12 @@ function clampInt(value, fallback, min, max) {
   const parsed = Number.parseInt(value, 10);
   if (!Number.isFinite(parsed)) return fallback;
   return Math.min(max, Math.max(min, parsed));
+}
+
+function normalizeQuality(value) {
+  if (typeof value !== "string") return "saver";
+  const id = value.trim().toLowerCase();
+  return QUALITY_IDS.has(id) ? id : "saver";
 }
 
 function log(...args) {
@@ -303,7 +316,10 @@ app.get("/healthz", (req, res) => {
 
 app.get("/config.json", (req, res) => {
   res.setHeader("Cache-Control", "no-store");
-  res.json({ iceServers: buildIceServers() });
+  res.json({
+    iceServers: buildIceServers(),
+    defaultQuality: DEFAULT_QUALITY,
+  });
 });
 
 app.use(
@@ -660,6 +676,7 @@ server.listen(PORT, HOST, () => {
   console.log("  ⛵  LUFFY is ready to sail");
   console.log(`      Local:   http://${shownHost}:${PORT}`);
   console.log(`      Rooms:   up to ${MAX_ROOM_PEERS} pirates each`);
+  console.log(`      Quality: ${DEFAULT_QUALITY} (users can change it mid-call)`);
   console.log(`      Mode:    ${IS_PRODUCTION ? "production" : "development"}`);
   console.log("");
 });

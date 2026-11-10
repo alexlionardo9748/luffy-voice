@@ -10,6 +10,9 @@ signaling, and ephemeral chat relay.
 - **Named rooms** — type any room name, share the invite link, done.
 - **Crystal voice** — echo cancellation, noise suppression, automatic gain.
 - **Screen sharing** — up to 1080p60 with optional system/tab audio.
+- **Stream quality control** — live presets from *Voice only* and *Data saver*
+  up to *High*, with the estimated data use shown in the picker. The choice is
+  remembered and can be changed mid-call.
 - **Independent volume controls** — separate volume sliders and mute buttons for
   each friend's microphone *and* their incoming screen-share audio.
 - **Crew chat** — text, emoji, and picture messages with inline previews, a
@@ -67,6 +70,7 @@ Configuration is read from environment variables:
 | `PORT` | HTTP port (default `3000`) |
 | `HOST` | Bind address (default `0.0.0.0`) |
 | `MAX_ROOM_PEERS` | Mesh size limit, `2`–`12` (default `8`) |
+| `DEFAULT_QUALITY` | Starting stream preset: `voice`, `saver`, `low`, `medium`, `high` (default `saver`) |
 | `STUN_URLS` | Comma-separated STUN URLs |
 | `TURN_URLS` | Comma-separated TURN URLs, e.g. `turn:turn.example.com:3478` |
 | `TURN_USERNAME` / `TURN_CREDENTIAL` | Static TURN credentials |
@@ -106,11 +110,40 @@ Browser A ──┐                        ┌── Browser B
 
 Keep rooms small (≤ 8 people) — mesh upload bandwidth grows linearly.
 
+## Data usage & stream quality
+
+Media is peer-to-peer, so the server only relays small signaling messages.
+Signaling is typically **a few KB per minute**, and that is the part that can
+truthfully be called "a few kilobytes". Live voice itself cannot: the Opus
+codec needs roughly 16–48 kbps, so even the leanest voice-only call is around
+**0.1 MB per minute** (often less while people are quiet, thanks to Opus DTX).
+
+The quality picker controls the media ceilings for both voice and screen video:
+
+| Preset | Mic ceiling | Screen ceiling | Approx. outbound ceiling |
+| --- | --- | --- | --- |
+| **Voice only** | 16 kbps | off | ~0.12 MB/min |
+| **Data saver** | 16 kbps | 640×360 @ 5 fps, 80 kbps | ~0.9 MB/min |
+| **Low** | 24 kbps | 854×480 @ 15 fps, 500 kbps | ~4.1 MB/min |
+| **Balanced** | 32 kbps | 1280×720 @ 30 fps, 1.2 Mbps | ~9.5 MB/min |
+| **High** | 48 kbps | 1920×1080 @ 60 fps, 4 Mbps | ~30.7 MB/min |
+
+These are ceilings for one outgoing stream; a quiet room or a mostly static
+screen uses less. In a 1:1 call you also receive roughly one stream from the
+other person, so device-wide usage is about double the table. Use **Voice
+only** when you need the absolute minimum: it disables screen sharing and
+deactivates idle senders, and Opus DTX stops packets entirely during silence.
+
+Data saver is the recommended default on metered connections. Set the starting
+preset with the `DEFAULT_QUALITY` environment variable. Each browser remembers
+its own choice in `localStorage`, and the in-call picker applies changes live
+without renegotiating the connection.
+
 ## HTTP endpoints
 
 - `GET /` — the app
 - `GET /healthz` — health/uptime/room count (handy for load balancers)
-- `GET /config.json` — ICE server configuration for the browser
+- `GET /config.json` — ICE server configuration + default quality for the browser
 - `GET /socket.io/…` — Socket.IO signaling (WebSocket + polling fallback)
 
 ## Security notes
