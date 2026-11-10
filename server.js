@@ -38,10 +38,13 @@ const PUBLIC_DIR = __dirname;
 const MAX_ROOM_PEERS = clampInt(process.env.MAX_ROOM_PEERS, 8, 2, 12);
 
 /**
- * Default stream-quality preset handed to new browsers. Users can override it
- * in the UI; this only sets the starting point.
+ * Default stream quality handed to new browsers. Users can override it in the
+ * UI; this only sets the starting point. Old preset ids (voice/saver/low/
+ * medium/high) still work; the new ids name a resolution and frame rate
+ * directly, e.g. "480p30", "720p60", or "1080p30-low".
  */
 const QUALITY_IDS = new Set(["voice", "saver", "low", "medium", "high"]);
+const QUALITY_ID_PATTERN = /^(480|720|1080)p(30|60)(-low)?$/;
 const DEFAULT_QUALITY = normalizeQuality(process.env.DEFAULT_QUALITY);
 
 const ROOM_MAX_LENGTH = 32;
@@ -70,7 +73,7 @@ function clampInt(value, fallback, min, max) {
 function normalizeQuality(value) {
   if (typeof value !== "string") return "saver";
   const id = value.trim().toLowerCase();
-  return QUALITY_IDS.has(id) ? id : "saver";
+  return QUALITY_IDS.has(id) || QUALITY_ID_PATTERN.test(id) ? id : "saver";
 }
 
 function log(...args) {

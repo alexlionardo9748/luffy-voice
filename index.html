@@ -535,6 +535,61 @@
       line-height: 1.5;
     }
 
+    .quality-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .quality-field {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .quality-field-label {
+      color: var(--muted-2);
+      font-size: 0.62rem;
+      font-weight: 800;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+    }
+
+    .low-data-toggle {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      padding: 11px 13px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: rgba(255, 255, 255, 0.03);
+      cursor: pointer;
+      transition: border-color 0.18s, background 0.18s;
+    }
+
+    .low-data-toggle:hover {
+      border-color: rgba(255, 209, 102, 0.3);
+      background: rgba(255, 209, 102, 0.05);
+    }
+
+    .low-data-toggle input {
+      margin: 2px 0 0;
+      accent-color: var(--gold);
+    }
+
+    .low-data-toggle span {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      font-size: 0.76rem;
+      line-height: 1.4;
+    }
+
+    .low-data-toggle small {
+      color: var(--muted-2);
+      font-size: 0.68rem;
+    }
+
     .select-input {
       cursor: pointer;
       padding-right: 38px;
@@ -557,10 +612,15 @@
 
     .select-input-sm {
       width: auto;
-      min-width: 198px;
+      min-width: 104px;
       padding: 9px 34px 9px 12px;
       border-radius: 12px;
       font-size: 0.75rem;
+    }
+
+    .select-input:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
     }
 
     .primary-btn {
@@ -746,6 +806,30 @@
       letter-spacing: 0.14em;
       text-transform: uppercase;
       white-space: nowrap;
+    }
+
+    .quality-control-check {
+      gap: 7px;
+      padding: 8px 10px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: rgba(255, 255, 255, 0.03);
+      color: var(--muted-2);
+      font-size: 0.7rem;
+      cursor: pointer;
+      user-select: none;
+      transition: border-color 0.18s, background 0.18s, color 0.18s;
+    }
+
+    .quality-control-check:hover {
+      border-color: rgba(255, 209, 102, 0.3);
+      background: rgba(255, 209, 102, 0.05);
+      color: var(--text);
+    }
+
+    .quality-control-check input {
+      accent-color: var(--gold);
+      cursor: pointer;
     }
 
     /* =====================================================================
@@ -2329,6 +2413,10 @@
         flex: 1;
       }
 
+      .quality-control-check {
+        flex: 0 0 auto;
+      }
+
       .select-input-sm {
         width: 100%;
         min-width: 0;
@@ -2637,10 +2725,26 @@
         </div>
 
         <div class="field">
-          <label class="field-label" for="qualitySelect">Stream quality</label>
-          <select class="text-input select-input" id="qualitySelect" name="quality"></select>
+          <span class="field-label">Stream quality</span>
+          <div class="quality-grid">
+            <label class="quality-field" for="resolutionSelect">
+              <span class="quality-field-label">Resolution</span>
+              <select class="text-input select-input" id="resolutionSelect" name="resolution"></select>
+            </label>
+            <label class="quality-field" for="fpsSelect">
+              <span class="quality-field-label">Frame rate</span>
+              <select class="text-input select-input" id="fpsSelect" name="fps"></select>
+            </label>
+          </div>
+          <label class="low-data-toggle" for="lowDataToggle">
+            <input type="checkbox" id="lowDataToggle" />
+            <span>
+              <strong>Low data</strong>
+              <small>Keeps your resolution and frame rate but cuts bitrate. Motion may look softer.</small>
+            </span>
+          </label>
           <p class="field-hint" id="qualityHint">
-            Data saver keeps media usage low. You can change this mid-call.
+            Choose a resolution and frame rate. You can change this mid-call.
           </p>
         </div>
 
@@ -2672,14 +2776,31 @@
         </div>
 
         <div class="call-head-actions">
-          <label class="quality-control" for="qualitySelectCall">
-            <span class="quality-control-label">Quality</span>
+          <label class="quality-control" for="resolutionSelectCall">
+            <span class="quality-control-label">Res</span>
             <select
               class="text-input select-input select-input-sm"
-              id="qualitySelectCall"
-              aria-label="Stream quality"
-              title="Change stream quality and data usage"
+              id="resolutionSelectCall"
+              aria-label="Stream resolution"
+              title="Screen resolution"
             ></select>
+          </label>
+          <label class="quality-control" for="fpsSelectCall">
+            <span class="quality-control-label">FPS</span>
+            <select
+              class="text-input select-input select-input-sm"
+              id="fpsSelectCall"
+              aria-label="Stream frame rate"
+              title="Screen frame rate"
+            ></select>
+          </label>
+          <label
+            class="quality-control quality-control-check"
+            for="lowDataToggleCall"
+            title="Cut the bitrate ceiling to save data"
+          >
+            <input type="checkbox" id="lowDataToggleCall" />
+            <span>Low data</span>
           </label>
           <button class="ghost-btn" id="copyInviteBtn" type="button">
             <svg aria-hidden="true"><use href="#icon-copy"></use></svg>

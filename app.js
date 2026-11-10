@@ -85,8 +85,12 @@
     chatLightboxClose: $("#chatLightboxClose"),
 
     // Stream quality
-    qualitySelect: $("#qualitySelect"),
-    qualitySelectCall: $("#qualitySelectCall"),
+    resolutionSelect: $("#resolutionSelect"),
+    fpsSelect: $("#fpsSelect"),
+    lowDataToggle: $("#lowDataToggle"),
+    resolutionSelectCall: $("#resolutionSelectCall"),
+    fpsSelectCall: $("#fpsSelectCall"),
+    lowDataToggleCall: $("#lowDataToggleCall"),
     qualityHint: $("#qualityHint"),
     qualityHintCall: $("#qualityHintCall"),
   };
@@ -105,90 +109,56 @@
 
   const STORAGE_NAME = "luffy:name";
   const STORAGE_VOLUMES = "luffy:volumes:v1";
-  const STORAGE_QUALITY = "luffy:quality:v1";
-  const DEFAULT_QUALITY = "saver";
+  const STORAGE_QUALITY = "luffy:quality:v2";
+  const STORAGE_QUALITY_LEGACY = "luffy:quality:v1";
 
   /**
-   * Stream-quality presets. Each preset controls three things:
-   *   • capture  — constraints handed to getDisplayMedia()
-   *   • video    — encoder ceiling applied through RTCRtpSender.setParameters()
-   *   • opus     — Opus parameters written into the SDP (DTX is the big win:
-   *                no packets at all while nobody is talking)
+   * Quality is two independent axes plus an optional bitrate squeeze:
+   *   • resolution — Voice only, 480p, 720p, or 1080p
+   *   • frame rate — 30 or 60 fps
+   *   • low data   — keep the resolution/fps but cut the bitrate ceiling
    *
-   * `video: null` means voice-only: the video sender is deactivated and screen
-   * sharing is disabled while that preset is selected.
+   * `getQualityPreset()` combines them into one object that the rest of the
+   * client already understands (video, capture, opus, ...).
    *
    * Figures are ceilings, not guarantees. Actual usage also depends on how much
    * the screen changes and how much people talk.
    */
-  const QUALITY_PRESETS = {
-    voice: {
-      id: "voice",
-      label: "Voice only",
-      short: "Voice only",
-      detail: "No screen video. Smallest possible data use.",
-      audioBitrate: 16_000,
-      video: null,
-      capture: null,
-      contentHint: "speech",
-      opus: { maxaveragebitrate: 16_000, usedtx: true, useinbandfec: false },
-      imageDimension: 1_000,
-      imageQuality: 0.78,
-    },
-    saver: {
-      id: "saver",
-      label: "Data saver",
-      short: "Saver",
-      detail: "Voice-first with a small, low-motion screen stream (under ~1 MB/min).",
-      audioBitrate: 16_000,
-      video: { width: 640, height: 360, frameRate: 5, maxBitrate: 80_000 },
-      capture: { width: 1280, height: 720, frameRate: 15 },
-      contentHint: "text",
-      opus: { maxaveragebitrate: 16_000, usedtx: true, useinbandfec: false },
-      imageDimension: 1_000,
-      imageQuality: 0.8,
-    },
-    low: {
-      id: "low",
-      label: "Low",
-      short: "Low",
-      detail: "480p screen at 15 fps. Good on mobile data.",
-      audioBitrate: 24_000,
-      video: { width: 854, height: 480, frameRate: 15, maxBitrate: 500_000 },
-      capture: { width: 1920, height: 1080, frameRate: 20 },
-      contentHint: "text",
-      opus: { maxaveragebitrate: 24_000, usedtx: true, useinbandfec: true },
-      imageDimension: 1_400,
-      imageQuality: 0.82,
-    },
-    medium: {
-      id: "medium",
-      label: "Balanced",
-      short: "Balanced",
-      detail: "720p screen at 30 fps. A good everyday default.",
-      audioBitrate: 32_000,
-      video: { width: 1280, height: 720, frameRate: 30, maxBitrate: 1_200_000 },
-      capture: { width: 1920, height: 1080, frameRate: 30 },
-      contentHint: "text",
-      opus: { maxaveragebitrate: 32_000, usedtx: true, useinbandfec: true },
-      imageDimension: 1_600,
-      imageQuality: 0.85,
-    },
-    high: {
-      id: "high",
-      label: "High",
-      short: "High",
-      detail: "1080p screen at 60 fps. Needs a strong connection.",
-      audioBitrate: 48_000,
-      video: { width: 1920, height: 1080, frameRate: 60, maxBitrate: 4_000_000 },
-      capture: { width: 1920, height: 1080, frameRate: 60 },
-      contentHint: "detail",
-      opus: { maxaveragebitrate: 48_000, usedtx: true, useinbandfec: true },
-      imageDimension: 1_600,
-      imageQuality: 0.86,
-    },
+  const QUALITY_RESOLUTIONS = {
+    voice: { id: "voice", label: "Voice only", width: 0, height: 0 },
+    "480": { id: "480", label: "480p", width: 854, height: 480 },
+    "720": { id: "720", label: "720p", width: 1280, height: 720 },
+    "1080": { id: "1080", label: "1080p", width: 1920, height: 1080 },
   };
-  const QUALITY_ORDER = ["voice", "saver", "low", "medium", "high"];
+  const QUALITY_RESOLUTION_ORDER = ["voice", "480", "720", "1080"];
+  const QUALITY_FRAME_RATES = [30, 60];
+  const QUALITY_VIDEO_BITRATES = {
+    "480": { 30: 300_000, 60: 500_000 },
+    "720": { 30: 900_000, 60: 1_500_000 },
+    "1080": { 30: 1_800_000, 60: 3_000_000 },
+  };
+  const QUALITY_LOW_DATA_SCALE = 0.3;
+  const QUALITY_AUDIO_PROFILES = {
+    normal: { audio: 32_000, screenAudio: 32_000 },
+    low: { audio: 16_000, screenAudio: 20_000 },
+    voice: { audio: 16_000, screenAudio: 0 },
+  };
+
+  const DEFAULT_QUALITY_SETTINGS = {
+    resolution: "480",
+    frameRate: 30,
+    lowData: true,
+  };
+
+  // Backwards-compatible aliases for the old preset ids. Server operators may
+  // still set DEFAULT_QUALITY=saver or DEFAULT_QUALITY=medium.
+  const QUALITY_ALIASES = {
+    voice: { resolution: "voice", frameRate: 30, lowData: true },
+    saver: { resolution: "480", frameRate: 30, lowData: true },
+    low: { resolution: "480", frameRate: 30, lowData: false },
+    medium: { resolution: "720", frameRate: 30, lowData: false },
+    high: { resolution: "1080", frameRate: 60, lowData: false },
+  };
 
   // Chat
   const CHAT_MAX_LENGTH = 2_000;
@@ -265,7 +235,9 @@
     keepAlive: [],
 
     // Stream quality
-    quality: DEFAULT_QUALITY,
+    resolution: DEFAULT_QUALITY_SETTINGS.resolution,
+    frameRate: DEFAULT_QUALITY_SETTINGS.frameRate,
+    lowData: DEFAULT_QUALITY_SETTINGS.lowData,
     serverDefaultQuality: "",
   };
 
@@ -464,22 +436,152 @@
   // =========================================================================
   // 4b. Stream quality / bandwidth presets
   // =========================================================================
-  function getQualityPreset(id = state.quality) {
-    return QUALITY_PRESETS[id] || QUALITY_PRESETS[DEFAULT_QUALITY];
+  function clampFrameRate(value) {
+    const parsed = Number(value);
+    return QUALITY_FRAME_RATES.includes(parsed) ? parsed : 30;
+  }
+
+  function normalizeQualitySettings(settings) {
+    const source = settings && typeof settings === "object" ? settings : {};
+    const resolution = QUALITY_RESOLUTIONS[source.resolution]
+      ? source.resolution
+      : DEFAULT_QUALITY_SETTINGS.resolution;
+
+    return {
+      resolution,
+      frameRate: resolution === "voice" ? 30 : clampFrameRate(source.frameRate),
+      lowData: source.lowData === true,
+    };
+  }
+
+  /** Map an old preset id or a server default id to the two quality axes. */
+  function qualitySettingsFromId(id) {
+    if (typeof id !== "string") return { ...DEFAULT_QUALITY_SETTINGS };
+    const key = id.trim().toLowerCase();
+
+    if (QUALITY_ALIASES[key]) return { ...QUALITY_ALIASES[key] };
+
+    // New ids look like 480p30, 720p60, or 1080p30-low.
+    const match = /^(480|720|1080)p(30|60)(-low)?$/.exec(key);
+    if (!match) return { ...DEFAULT_QUALITY_SETTINGS };
+
+    return {
+      resolution: match[1],
+      frameRate: Number(match[2]),
+      lowData: Boolean(match[3]),
+    };
+  }
+
+  function qualitySettingsId(settings) {
+    if (settings.resolution === "voice") return "voice";
+    return `${settings.resolution}p${settings.frameRate}${settings.lowData ? "-low" : ""}`;
+  }
+
+  function isQualityId(id) {
+    if (typeof id !== "string") return false;
+    const key = id.trim().toLowerCase();
+    return Boolean(QUALITY_ALIASES[key]) || /^(480|720|1080)p(30|60)(-low)?$/.test(key);
+  }
+
+  function normalizeSavedQuality(raw) {
+    if (!raw) return null;
+
+    if (raw.startsWith("{")) {
+      try {
+        const parsed = JSON.parse(raw);
+        return parsed && typeof parsed === "object" ? normalizeQualitySettings(parsed) : null;
+      } catch {
+        return null;
+      }
+    }
+
+    return qualitySettingsFromId(raw);
+  }
+
+  function getQualityPreset(settings = state) {
+    const resolution = QUALITY_RESOLUTIONS[settings.resolution] || QUALITY_RESOLUTIONS["480"];
+    const frameRate = clampFrameRate(settings.frameRate);
+    const lowData = settings.lowData === true;
+
+    if (resolution.id === "voice") {
+      const audio = QUALITY_AUDIO_PROFILES.voice;
+      return {
+        id: "voice",
+        label: "Voice only",
+        detail: "No screen video. Smallest possible data use.",
+        resolution: "voice",
+        frameRate: 0,
+        lowData: true,
+        audioBitrate: audio.audio,
+        screenAudioBitrate: audio.screenAudio,
+        video: null,
+        capture: null,
+        contentHint: "speech",
+        opus: { maxaveragebitrate: audio.audio, usedtx: true, useinbandfec: false },
+        imageDimension: 1_000,
+        imageQuality: 0.78,
+      };
+    }
+
+    const audio = lowData ? QUALITY_AUDIO_PROFILES.low : QUALITY_AUDIO_PROFILES.normal;
+    const baseBitrate = QUALITY_VIDEO_BITRATES[resolution.id][frameRate];
+    const maxBitrate = Math.max(
+      40_000,
+      Math.round(baseBitrate * (lowData ? QUALITY_LOW_DATA_SCALE : 1))
+    );
+
+    return {
+      id: qualitySettingsId({ resolution: resolution.id, frameRate, lowData }),
+      label: `${resolution.label} · ${frameRate} fps${lowData ? " · low data" : ""}`,
+      detail: lowData
+        ? "Tighter bitrate ceiling; motion may look softer."
+        : "Full bitrate ceiling for this resolution and frame rate.",
+      resolution: resolution.id,
+      frameRate,
+      lowData,
+      audioBitrate: audio.audio,
+      screenAudioBitrate: audio.screenAudio,
+      video: {
+        width: resolution.width,
+        height: resolution.height,
+        frameRate,
+        maxBitrate,
+      },
+      // Always capture at a 1080p60 ceiling so the selected resolution/frame
+      // rate can be changed up or down mid-share without re-capturing. The
+      // encoder scales the output and caps the frame rate.
+      capture: {
+        width: 1920,
+        height: 1080,
+        frameRate: 60,
+      },
+      contentHint: resolution.id === "1080" ? "detail" : "text",
+      opus: {
+        maxaveragebitrate: audio.audio,
+        usedtx: true,
+        useinbandfec: !lowData,
+      },
+      imageDimension: lowData || resolution.id === "480" ? 1_000 : 1_600,
+      imageQuality: lowData ? 0.8 : 0.85,
+    };
   }
 
   function readSavedQuality() {
     try {
-      const saved = window.localStorage.getItem(STORAGE_QUALITY) || "";
-      return QUALITY_PRESETS[saved] ? saved : "";
+      const current = normalizeSavedQuality(window.localStorage.getItem(STORAGE_QUALITY));
+      if (current) return current;
+      return normalizeSavedQuality(window.localStorage.getItem(STORAGE_QUALITY_LEGACY));
     } catch {
-      return "";
+      return null;
     }
   }
 
-  function saveQuality(id) {
+  function saveQuality(settings) {
     try {
-      window.localStorage.setItem(STORAGE_QUALITY, id);
+      window.localStorage.setItem(
+        STORAGE_QUALITY,
+        JSON.stringify(normalizeQualitySettings(settings))
+      );
     } catch {
       /* private mode */
     }
@@ -490,8 +592,10 @@
    * ceilings only, not signaling (a few KB/min) or chat.
    */
   function qualityMegabytesPerMinute(preset) {
-    const shareAudio = preset.video ? Math.max(preset.audioBitrate, 24_000) : 0;
-    const bitsPerSecond = preset.audioBitrate + shareAudio + (preset.video?.maxBitrate || 0);
+    const bitsPerSecond =
+      preset.audioBitrate +
+      (preset.video ? preset.screenAudioBitrate : 0) +
+      (preset.video?.maxBitrate || 0);
     return (bitsPerSecond * 60) / 8 / 1_000_000;
   }
 
@@ -510,14 +614,26 @@
   }
 
   function populateQualitySelects() {
-    for (const select of [el.qualitySelect, el.qualitySelectCall]) {
+    for (const select of [el.resolutionSelect, el.resolutionSelectCall]) {
       if (!select) continue;
       const fragment = document.createDocumentFragment();
-      for (const id of QUALITY_ORDER) {
-        const preset = QUALITY_PRESETS[id];
+      for (const id of QUALITY_RESOLUTION_ORDER) {
+        const resolution = QUALITY_RESOLUTIONS[id];
         const option = document.createElement("option");
         option.value = id;
-        option.textContent = `${preset.label} — ${qualityBandwidthLabel(preset)}`;
+        option.textContent = resolution.label;
+        fragment.append(option);
+      }
+      select.replaceChildren(fragment);
+    }
+
+    for (const select of [el.fpsSelect, el.fpsSelectCall]) {
+      if (!select) continue;
+      const fragment = document.createDocumentFragment();
+      for (const fps of QUALITY_FRAME_RATES) {
+        const option = document.createElement("option");
+        option.value = String(fps);
+        option.textContent = `${fps} fps`;
         fragment.append(option);
       }
       select.replaceChildren(fragment);
@@ -526,9 +642,23 @@
 
   function updateQualityUi() {
     const preset = getQualityPreset();
+    const voiceOnly = preset.resolution === "voice";
 
-    if (el.qualitySelect) el.qualitySelect.value = preset.id;
-    if (el.qualitySelectCall) el.qualitySelectCall.value = preset.id;
+    for (const select of [el.resolutionSelect, el.resolutionSelectCall]) {
+      if (select) select.value = preset.resolution;
+    }
+
+    for (const select of [el.fpsSelect, el.fpsSelectCall]) {
+      if (!select) continue;
+      select.value = String(preset.frameRate || 30);
+      select.disabled = voiceOnly;
+    }
+
+    for (const toggle of [el.lowDataToggle, el.lowDataToggleCall]) {
+      if (!toggle) continue;
+      toggle.checked = preset.lowData === true;
+      toggle.disabled = voiceOnly;
+    }
 
     if (el.qualityHint) el.qualityHint.textContent = qualitySummary(preset);
     if (el.qualityHintCall) el.qualityHintCall.textContent = qualitySummary(preset);
@@ -537,14 +667,20 @@
   }
 
   /**
-   * Change presets live: re-tune every active peer, stop an existing screen
-   * share if the new preset is voice-only, and remember the choice.
+   * Change quality live: re-tune every active peer, stop an existing screen
+   * share if video is turned off, and remember the choice.
    */
-  function setQuality(id, { silent = false, apply = true, persist = true } = {}) {
-    const next = QUALITY_PRESETS[id] ? id : DEFAULT_QUALITY;
-    const changed = state.quality !== next;
+  function setQuality(settings, { silent = false, apply = true, persist = true } = {}) {
+    const next = normalizeQualitySettings(settings);
+    const changed =
+      state.resolution !== next.resolution ||
+      state.frameRate !== next.frameRate ||
+      state.lowData !== next.lowData;
 
-    state.quality = next;
+    state.resolution = next.resolution;
+    state.frameRate = next.frameRate;
+    state.lowData = next.lowData;
+
     if (persist) saveQuality(next);
     updateQualityUi();
 
@@ -562,8 +698,12 @@
     }
 
     if (!silent) {
-      toast(`Quality set to ${preset.label.toLowerCase()}.`, "success", 2600);
+      toast(`Quality set to ${preset.label}.`, "success", 2600);
     }
+  }
+
+  function setQualityFromId(id, options) {
+    setQuality(qualitySettingsFromId(id), options);
   }
 
   /** Apply the active preset to one peer's audio + video senders. */
@@ -640,12 +780,8 @@
             ? Boolean(state.sharingAudio)
             : Boolean(state.micTrack && !state.micMuted);
 
-        // Voice gets the full preset budget; share audio stays a touch higher
-        // so music/system sounds do not turn to mush in saver mode.
         encoding.maxBitrate =
-          kind === "screenAudio"
-            ? Math.max(preset.audioBitrate, 24_000)
-            : preset.audioBitrate;
+          kind === "screenAudio" ? preset.screenAudioBitrate : preset.audioBitrate;
         if ("networkPriority" in encoding) {
           encoding.networkPriority = kind === "mic" ? "high" : "low";
         }
@@ -1072,7 +1208,7 @@
 
     if (!preset.video) {
       toast(
-        "Voice-only quality is on. Pick Data saver or higher to share your screen.",
+        "Voice-only quality is on. Pick 480p, 720p, or 1080p to share your screen.",
         "warning",
         5200
       );
@@ -1089,8 +1225,8 @@
 
     try {
       const stream = await navigator.mediaDevices.getDisplayMedia({
-        // Capture at the preset's ceiling; the encoder then scales the output
-        // down to the smaller target without sending extra pixels.
+        // Capture at a 1080p60 ceiling so resolution/frame-rate changes can be
+        // applied live. The encoder scales the output to the selected quality.
         video: {
           frameRate: { ideal: preset.capture.frameRate, max: preset.capture.frameRate },
           width: { ideal: preset.capture.width, max: preset.capture.width },
@@ -2944,8 +3080,8 @@
       const response = await fetch("/config.json", { cache: "no-store" });
       if (!response.ok) return DEFAULT_ICE;
       const data = await response.json();
-      if (typeof data.defaultQuality === "string" && QUALITY_PRESETS[data.defaultQuality]) {
-        state.serverDefaultQuality = data.defaultQuality;
+      if (isQualityId(data.defaultQuality)) {
+        state.serverDefaultQuality = data.defaultQuality.trim().toLowerCase();
       }
       if (Array.isArray(data.iceServers) && data.iceServers.length > 0) {
         return data.iceServers;
@@ -2967,10 +3103,36 @@
       el.roomInput.select();
     });
 
-    for (const select of [el.qualitySelect, el.qualitySelectCall]) {
-      select?.addEventListener("change", () => {
-        setQuality(select.value, { silent: !state.joined });
-      });
+    const qualityControls = [
+      {
+        resolution: el.resolutionSelect,
+        frameRate: el.fpsSelect,
+        lowData: el.lowDataToggle,
+      },
+      {
+        resolution: el.resolutionSelectCall,
+        frameRate: el.fpsSelectCall,
+        lowData: el.lowDataToggleCall,
+      },
+    ];
+
+    for (const controls of qualityControls) {
+      if (!controls.resolution) continue;
+
+      const apply = () => {
+        setQuality(
+          {
+            resolution: controls.resolution.value,
+            frameRate: Number(controls.frameRate?.value || state.frameRate),
+            lowData: controls.lowData?.checked === true,
+          },
+          { silent: !state.joined }
+        );
+      };
+
+      controls.resolution.addEventListener("change", apply);
+      controls.frameRate?.addEventListener("change", apply);
+      controls.lowData?.addEventListener("change", apply);
     }
 
     el.micBtn.addEventListener("click", () => {
@@ -3162,7 +3324,10 @@
     setConnection("connecting", "Connecting…");
     buildEmojiPanel();
     populateQualitySelects();
-    state.quality = readSavedQuality() || DEFAULT_QUALITY;
+    const savedQuality = readSavedQuality() || DEFAULT_QUALITY_SETTINGS;
+    state.resolution = savedQuality.resolution;
+    state.frameRate = savedQuality.frameRate;
+    state.lowData = savedQuality.lowData;
     updateChatEmpty();
     updateChatUnread();
     updateChatSendState();
@@ -3179,7 +3344,7 @@
   const iceConfigReady = loadIceConfig().then((servers) => {
     state.iceServers = servers;
     if (!readSavedQuality() && state.serverDefaultQuality) {
-      setQuality(state.serverDefaultQuality, { silent: true, apply: false, persist: false });
+      setQualityFromId(state.serverDefaultQuality, { silent: true, apply: false, persist: false });
     }
   });
 
